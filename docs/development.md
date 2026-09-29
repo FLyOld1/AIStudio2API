@@ -148,7 +148,7 @@ Camoufox 由 Go 通过 WebDriver BiDi 直接管理。启动数据面时，服务
 | `AISTUDIO_AUTH_STATES` | 账户文件、目录或逗号分隔的多个路径 | `auth` |
 | `LISTEN_ADDR` | HTTP 服务监听地址 | `127.0.0.1:2048` |
 | `PROXY_API_KEY` | 公开 API 访问密钥 | 空 |
-| `PROXY` | setup 与未设置账户代理时使用的固定出口 | 空 |
+| `PROXY` | setup 与未设置账户代理时使用的固定出口，支持 `user:pass` 认证 | 空 |
 | `INIT_TIMEOUT` | 单账户初始化超时 | `2m` |
 | `REQUEST_TIMEOUT` | 单次请求最大执行时间 | `5m` |
 | `WARM_WORKER_LIMIT` | 常驻预热账户数 | `5` |

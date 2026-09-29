@@ -55,6 +55,17 @@ func requestLogEntry(entry api.AccessLog) requestlog.Entry {
 	return record
 }
 
+// requestLogDisplayLimit 限制进入管理事件的正文长度，避免内存日志占用过大
+const requestLogDisplayLimit = 64 * 1024
+
+// displayBody 截断进入管理事件的正文，并保证截断后仍是合法 UTF-8
+func displayBody(body string, truncated bool) (string, bool) {
+	if len(body) <= requestLogDisplayLimit {
+		return body, truncated
+	}
+	return strings.ToValidUTF8(body[:requestLogDisplayLimit], ""), true
+}
+
 // requestLogData 投影请求身份、参数与端到端用量
 func requestLogData(entry api.AccessLog) *api.RequestLog {
 	data := &api.RequestLog{
@@ -66,6 +77,8 @@ func requestLogData(entry api.AccessLog) *api.RequestLog {
 		FirstEventMS: float64(entry.FirstEvent) / float64(time.Millisecond), UpstreamBytes: entry.UpstreamBytes,
 		Channel: entry.Channel,
 	}
+	data.RequestBody, data.RequestBodyTruncated = displayBody(entry.RequestBody, entry.RequestBodyTruncated)
+	data.ResponseBody, data.ResponseBodyTruncated = displayBody(entry.ResponseBody, entry.ResponseBodyTruncated)
 	if entry.Generation {
 		data.Parameters = map[string]string{
 			"temperature": entry.Temperature, "top_p": entry.TopP,

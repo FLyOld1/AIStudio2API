@@ -7,6 +7,24 @@ import (
 	"testing"
 )
 
+func TestValidateProxyAllowsCredentials(t *testing.T) {
+	for _, value := range []string{
+		"http://user:pass@127.0.0.1:8080",
+		"socks5://user:pass@proxy.example.com:1080",
+		"https://user@proxy.example.com:1080",
+	} {
+		if err := ValidateProxy(value); err != nil {
+			t.Fatalf("ValidateProxy(%q) 应通过: %v", value, err)
+		}
+	}
+	if err := ValidateProxy("http://:pass@127.0.0.1:8080"); err == nil {
+		t.Fatalf("空用户名应校验失败")
+	}
+	if err := ValidateProxy("http://user:pass@127.0.0.1:8080/path"); err == nil {
+		t.Fatalf("带路径的代理应校验失败")
+	}
+}
+
 func TestValidateRemoteAccessRequiresKey(t *testing.T) {
 	cfg := Default()
 	cfg.AdminRemoteAccess = true

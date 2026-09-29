@@ -99,6 +99,10 @@ export interface RequestLog {
     total_tokens: number
     average_tokens_per_second: number
   }
+  request_body?: string
+  request_body_truncated?: boolean
+  response_body?: string
+  response_body_truncated?: boolean
 }
 
 export interface Model {

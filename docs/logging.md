@@ -283,6 +283,8 @@ WARN  account@example.com  账号切换 | 模型=gemini-3.7-flash
 
 文件按 `REQUEST_LOG_MAX_FILE_MB` 轮转，命名形如 `requests-<时间戳>-<序号>.jsonl`；目录总量超过 `REQUEST_LOG_MAX_TOTAL_MB` 或文件超过 `REQUEST_LOG_RETENTION_DAYS` 时自动删除最旧文件（启动时、每 10 分钟与每次轮转时执行）。写入由单个 goroutine 串行完成，队列满时丢弃记录并限频告警，不阻塞请求。管理接口 `DELETE /api/logs`（日志页面的"清空"）同时清空内存日志与全部请求日志文件。
 
+请求完成事件同时把截断后的正文（单条上限 64KB，保留 UTF-8 边界）附在管理事件的 `request.request_body` / `request.response_body` 字段上，管理界面"冷却与请求"页面可对每条请求展开查看入参与出参；文件日志仍保留 `REQUEST_LOG_BODY_LIMIT_KB` 规定的完整前缀。
+
 示例：
 
 ```json

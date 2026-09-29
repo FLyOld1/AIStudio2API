@@ -408,7 +408,7 @@ cp .env.example .env
 | `AISTUDIO_AUTH_STATES` | `auth` | Account file, directory, or comma-separated paths |
 | `LISTEN_ADDR` | `127.0.0.1:2048` | Management UI and API listen address |
 | `PROXY_API_KEY` | empty | Public API key |
-| `PROXY` | empty | HTTP, HTTPS, or SOCKS5 proxy used by Chrome import, login, and accounts without an override |
+| `PROXY` | empty | HTTP, HTTPS, or SOCKS5 proxy used by Chrome import, login, and accounts without an override; `user:pass` credentials are supported |
 | `INIT_TIMEOUT` | `2m` | Per-account WAA initialization timeout |
 | `REQUEST_TIMEOUT` | `5m` | Maximum request execution time |
 | `WARM_WORKER_LIMIT` | `5` | Number of resident prewarmed accounts |
@@ -453,17 +453,19 @@ With `REQUEST_LOG_ENABLED=true`, the service writes `/v1` and `/v1beta` request 
 - Bodies are truncated to `REQUEST_LOG_BODY_LIMIT_KB` by default, with original byte counts and truncation flags; streamed responses store the aggregated raw SSE payload
 - `Authorization`, `X-API-Key`, `X-Admin-Key` headers and `?key=` query parameters are never written to disk
 - Files rotate at `REQUEST_LOG_MAX_FILE_MB`; files are also removed once the directory exceeds `REQUEST_LOG_MAX_TOTAL_MB` or a file exceeds `REQUEST_LOG_RETENTION_DAYS`
+- On the "Cooldowns & Requests" page each request can be expanded to inspect its request and response bodies (first 64KB, with a truncated marker)
 - The clear button on the logs page removes both in-memory logs and request log files; request bodies may contain user content, so protect the `logs/` directory
 
 ## Advanced Features
 
 ### Proxy Configuration
 
-HTTP, HTTPS, and SOCKS5 proxies without embedded credentials are supported:
+HTTP, HTTPS, and SOCKS5 proxies are supported, with optional username and password (e.g. `http://user:pass@host:port` or `socks5://user:pass@host:port`):
 
 1. Set the global proxy under Service Configuration
 2. Edit an account to set an account-specific proxy
-3. The account proxy is used for login, WAA, and business requests
+3. The account proxy is used for login, WAA, and business requests; the browser itself cannot authenticate, so the service relays through a local loopback bridge to complete proxy auth
+4. Proxy credentials are stored in plaintext in `.env` or the account's `account.json`; restrict file permissions accordingly
 
 ### Authentication File Management
 

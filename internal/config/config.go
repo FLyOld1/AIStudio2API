@@ -492,7 +492,7 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// ValidateProxy 校验账户或全局代理 URL
+// ValidateProxy 校验账户或全局代理 URL，允许携带 user:password 认证
 func ValidateProxy(value string) error {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -507,8 +507,8 @@ func ValidateProxy(value string) error {
 	default:
 		return fmt.Errorf("PROXY 必须是 http、https 或 socks5 URL")
 	}
-	if parsed.User != nil {
-		return fmt.Errorf("PROXY 不能包含认证信息")
+	if parsed.User != nil && strings.TrimSpace(parsed.User.Username()) == "" {
+		return fmt.Errorf("PROXY 用户名不能为空")
 	}
 	if parsed.Path != "" && parsed.Path != "/" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("PROXY 不能包含路径、查询参数或片段")

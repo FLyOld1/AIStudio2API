@@ -408,7 +408,7 @@ cp .env.example .env
 | `AISTUDIO_AUTH_STATES` | `auth` | 账户文件、目录或多个逗号分隔路径 |
 | `LISTEN_ADDR` | `127.0.0.1:2048` | 管理页面与 API 监听地址 |
 | `PROXY_API_KEY` | 空 | 公开 API key |
-| `PROXY` | 空 | Chrome 导入、登录和账户默认使用的 HTTP、HTTPS 或 SOCKS5 代理 |
+| `PROXY` | 空 | Chrome 导入、登录和账户默认使用的 HTTP、HTTPS 或 SOCKS5 代理，支持 `user:pass` 认证 |
 | `INIT_TIMEOUT` | `2m` | 单账户 WAA 初始化超时 |
 | `REQUEST_TIMEOUT` | `5m` | 单次请求最大执行时间 |
 | `WARM_WORKER_LIMIT` | `5` | 常驻预热账户数 |
@@ -453,17 +453,19 @@ cp .env.example .env
 - 单条正文默认截断到 `REQUEST_LOG_BODY_LIMIT_KB`，记录原始字节数与截断标记；流式响应记录聚合后的 SSE 原文
 - `Authorization`、`X-API-Key`、`X-Admin-Key` 请求头与 `?key=` 查询参数不会落盘
 - 文件按 `REQUEST_LOG_MAX_FILE_MB` 轮转；目录总量超过 `REQUEST_LOG_MAX_TOTAL_MB` 或文件超过 `REQUEST_LOG_RETENTION_DAYS` 时自动删除最旧文件
+- 管理界面的“冷却与请求”页面每条请求可展开查看请求入参与响应出参（展示前 64KB，超出部分标记“已截断”）
 - 日志页面的"清空"按钮会同时清空内存日志和磁盘请求日志文件；请求日志正文可能包含用户内容，注意 `logs/` 目录权限
 
 ## 高级功能
 
 ### 代理配置
 
-支持通过无认证信息的 HTTP、HTTPS 或 SOCKS5 代理访问 AI Studio：
+支持 HTTP、HTTPS 或 SOCKS5 代理，可携带账号密码认证（如 `http://user:pass@host:port` 或 `socks5://user:pass@host:port`）：
 
 1. 在“服务配置”中设置全局代理
 2. 在“账户”页面编辑单个账户时可以设置账户专用代理
-3. 账户代理同时用于登录、WAA 与业务请求
+3. 账户代理同时用于登录、WAA 与业务请求；浏览器本身不支持代理认证，服务会在本机自动中转完成认证
+4. 代理凭据以明文保存在 `.env` 或账户 `account.json` 中，请限制文件访问权限
 
 ### 认证文件管理
 

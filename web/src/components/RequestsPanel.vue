@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { api } from '@/api'
 import { channelLabelKey, useI18n, type TranslationKey } from '@/i18n'
-import type { Account, Cooldown, RequestState, RequestSummary } from '@/types'
+import type { Account, Cooldown, RequestLog, RequestState, RequestSummary } from '@/types'
 import UiIcon from './UiIcon.vue'
 
 const props = defineProps<{
   accounts: Account[]
   cooldowns: Cooldown[]
   requests: RequestSummary[]
+  requestLogs: Record<string, RequestLog>
   loading: boolean
   cooldownError: string
   requestError: string
@@ -22,6 +23,69 @@ const emit = defineEmits<{
 const { locale, t } = useI18n()
 const cancelling = ref('')
 const refreshing = ref(false)
+const expandedID = ref('')
+const copiedKey = ref('')
+let copiedTimer: number | undefined
+
+interface RequestBodies {
+  requestBody?: string | undefined
+  requestTruncated: boolean
+  responseBody?: string | undefined
+  responseTruncated: boolean
+}
+
+// bodiesOf 返回请求的入参与出参正文，未捕获时返回 undefined
+function bodiesOf(id: string): RequestBodies | undefined {
+  const log = props.requestLogs[id]
+  if (log === undefined || (log.request_body === undefined && log.response_body === undefined)) {
+    return undefined
+  }
+  return {
+    requestBody: log.request_body,
+    requestTruncated: log.request_body_truncated === true,
+    responseBody: log.response_body,
+    responseTruncated: log.response_body_truncated === true,
+  }
+}
+
+// expandedBodies 当前展开请求的正文
+const expandedBodies = computed(() =>
+  expandedID.value === '' ? undefined : bodiesOf(expandedID.value),
+)
+
+// hasBodies 判断请求是否已有可查看的正文
+function hasBodies(id: string): boolean {
+  return bodiesOf(id) !== undefined
+}
+
+// prettyBody 尝试格式化 JSON，失败时原样返回
+function prettyBody(value: string | undefined): string {
+  if (value === undefined) return ''
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
+}
+
+// copyBody 复制正文并短暂提示
+async function copyBody(key: string, value: string | undefined): Promise<void> {
+  if (value === undefined) return
+  try {
+    await navigator.clipboard.writeText(value)
+    copiedKey.value = key
+    if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
+    copiedTimer = window.setTimeout(() => {
+      copiedKey.value = ''
+    }, 1500)
+  } catch {
+    // 剪贴板不可用时保持原文可选中复制
+  }
+}
+
+onUnmounted(() => {
+  if (copiedTimer !== undefined) window.clearTimeout(copiedTimer)
+})
 
 const requestStateKeys: Record<RequestState, TranslationKey> = {
   queued: 'state.queued',
@@ -157,33 +221,103 @@ async function cancelRequest(request: RequestSummary): Promise<void> {
           <div
             v-for="request in requests"
             :key="request.id"
-            class="flex flex-wrap items-center justify-between gap-3 rounded p-2 transition hover:bg-[#21262d]"
+            class="rounded transition hover:bg-[#21262d]"
           >
-            <div class="min-w-0 flex-1">
-              <div class="flex min-w-0 items-center gap-2">
-                <strong class="truncate text-sm text-gray-300">{{ request.model }}</strong>
-                <span class="text-xs text-gray-500">{{ t(requestStateKeys[request.state]) }}</span>
+            <div class="flex flex-wrap items-center justify-between gap-3 p-2">
+              <div class="min-w-0 flex-1">
+                <div class="flex min-w-0 items-center gap-2">
+                  <strong class="truncate text-sm text-gray-300">{{ request.model }}</strong>
+                  <span class="text-xs text-gray-500">{{
+                    t(requestStateKeys[request.state])
+                  }}</span>
+                </div>
+              </div>
+              <div class="text-right text-xs text-gray-500">
+                <span class="block"
+                  >{{ accountLabel(request.account_id, request.account_label)
+                  }}<template v-if="request.channel">
+                    · {{ t(channelLabelKey(request.channel)) }}</template
+                  ></span
+                >
+                <time class="font-mono">{{ formatTime(request.started_at) }}</time>
+              </div>
+              <div class="flex items-center gap-2">
+                <button
+                  v-if="hasBodies(request.id)"
+                  class="rounded border border-[#30363d] px-3 py-1 text-xs text-gray-300 transition hover:bg-[#30363d]"
+                  type="button"
+                  @click="expandedID = expandedID === request.id ? '' : request.id"
+                >
+                  {{
+                    expandedID === request.id ? t('requests.hideBodies') : t('requests.viewBodies')
+                  }}
+                </button>
+                <button
+                  v-if="request.state === 'queued' || request.state === 'running'"
+                  class="rounded border border-red-900/50 bg-red-900/30 px-3 py-1 text-xs text-red-400 transition hover:bg-red-900/50 disabled:opacity-50"
+                  type="button"
+                  :disabled="cancelling !== ''"
+                  :aria-busy="cancelling === request.id"
+                  @click="cancelRequest(request)"
+                >
+                  {{ t('requests.stop') }}
+                </button>
               </div>
             </div>
-            <div class="text-right text-xs text-gray-500">
-              <span class="block"
-                >{{ accountLabel(request.account_id, request.account_label)
-                }}<template v-if="request.channel">
-                  · {{ t(channelLabelKey(request.channel)) }}</template
-                ></span
-              >
-              <time class="font-mono">{{ formatTime(request.started_at) }}</time>
-            </div>
-            <button
-              v-if="request.state === 'queued' || request.state === 'running'"
-              class="rounded border border-red-900/50 bg-red-900/30 px-3 py-1 text-xs text-red-400 transition hover:bg-red-900/50 disabled:opacity-50"
-              type="button"
-              :disabled="cancelling !== ''"
-              :aria-busy="cancelling === request.id"
-              @click="cancelRequest(request)"
-            >
-              {{ t('requests.stop') }}
-            </button>
+            <template v-if="expandedID === request.id && expandedBodies">
+              <div class="space-y-3 border-t border-[#30363d] px-3 py-3">
+                <div v-if="expandedBodies.requestBody !== undefined">
+                  <div class="mb-1 flex items-center justify-between">
+                    <span class="text-xs font-medium text-gray-400">{{
+                      t('requests.requestBody')
+                    }}</span>
+                    <div class="flex items-center gap-2">
+                      <span v-if="expandedBodies.requestTruncated" class="text-xs text-amber-400">{{
+                        t('requests.bodyTruncatedShort')
+                      }}</span>
+                      <button
+                        class="rounded border border-[#30363d] px-2 py-0.5 text-xs text-gray-400 transition hover:bg-[#30363d]"
+                        type="button"
+                        @click="copyBody(request.id + ':req', expandedBodies.requestBody)"
+                      >
+                        {{
+                          copiedKey === request.id + ':req' ? t('common.copied') : t('common.copy')
+                        }}
+                      </button>
+                    </div>
+                  </div>
+                  <pre
+                    class="max-h-72 overflow-auto rounded border border-[#30363d] bg-[#0d1117] p-2 font-mono text-xs break-all whitespace-pre-wrap text-gray-300"
+                    >{{ prettyBody(expandedBodies.requestBody) }}</pre>
+                </div>
+                <div v-if="expandedBodies.responseBody !== undefined">
+                  <div class="mb-1 flex items-center justify-between">
+                    <span class="text-xs font-medium text-gray-400">{{
+                      t('requests.responseBody')
+                    }}</span>
+                    <div class="flex items-center gap-2">
+                      <span
+                        v-if="expandedBodies.responseTruncated"
+                        class="text-xs text-amber-400"
+                        >{{ t('requests.bodyTruncatedShort') }}</span
+                      >
+                      <button
+                        class="rounded border border-[#30363d] px-2 py-0.5 text-xs text-gray-400 transition hover:bg-[#30363d]"
+                        type="button"
+                        @click="copyBody(request.id + ':res', expandedBodies.responseBody)"
+                      >
+                        {{
+                          copiedKey === request.id + ':res' ? t('common.copied') : t('common.copy')
+                        }}
+                      </button>
+                    </div>
+                  </div>
+                  <pre
+                    class="max-h-72 overflow-auto rounded border border-[#30363d] bg-[#0d1117] p-2 font-mono text-xs break-all whitespace-pre-wrap text-gray-300"
+                    >{{ prettyBody(expandedBodies.responseBody) }}</pre>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
       </article>

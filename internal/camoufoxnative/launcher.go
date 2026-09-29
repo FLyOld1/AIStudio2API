@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+
+	"github.com/Mag1cFall/AIStudio2API/internal/proxybridge"
 )
 
 var bidiEndpointPattern = regexp.MustCompile(`ws://[^\s]+`)
@@ -32,6 +34,7 @@ type browserProcess struct {
 	waitErr error
 	profile string
 	lock    *flock.Flock
+	bridge  *proxybridge.Bridge
 	mu      sync.Mutex
 	closed  bool
 }
@@ -49,8 +52,23 @@ func launchBrowser(ctx context.Context, options Options, config map[string]any) 
 	if err != nil {
 		return nil, "", err
 	}
-	prefs, err := firefoxPreferences(options.Proxy, options.ProxyBypass)
+	bridge, err := proxybridge.Start(options.Proxy)
 	if err != nil {
+		_ = removeProfile(profile, profileLock)
+		return nil, "", err
+	}
+	stopBridgeOnError := func() {
+		if bridge != nil {
+			_ = bridge.Close()
+		}
+	}
+	proxyValue := options.Proxy
+	if bridge != nil {
+		proxyValue = bridge.URL()
+	}
+	prefs, err := firefoxPreferences(proxyValue, options.ProxyBypass)
+	if err != nil {
+		stopBridgeOnError()
 		_ = removeProfile(profile, profileLock)
 		return nil, "", err
 	}
@@ -63,6 +81,7 @@ func launchBrowser(ctx context.Context, options Options, config map[string]any) 
 		}
 	}
 	if err := writeUserJS(profile, prefs); err != nil {
+		stopBridgeOnError()
 		_ = removeProfile(profile, profileLock)
 		return nil, "", err
 	}
@@ -84,16 +103,19 @@ func launchBrowser(ctx context.Context, options Options, config map[string]any) 
 	}
 	stderr, err := command.StderrPipe()
 	if err != nil {
+		stopBridgeOnError()
 		_ = removeProfile(profile, profileLock)
 		return nil, "", err
 	}
 	if err := command.Start(); err != nil {
+		stopBridgeOnError()
 		_ = removeProfile(profile, profileLock)
 		return nil, "", fmt.Errorf("启动 Camoufox: %w", err)
 	}
 	if err := attachBrowserProcess(command); err != nil {
 		_ = command.Process.Kill()
 		_ = command.Wait()
+		stopBridgeOnError()
 		_ = removeProfile(profile, profileLock)
 		return nil, "", fmt.Errorf("绑定 Camoufox 进程: %w", err)
 	}
@@ -102,6 +124,7 @@ func launchBrowser(ctx context.Context, options Options, config map[string]any) 
 		done:    make(chan struct{}),
 		profile: profile,
 		lock:    profileLock,
+		bridge:  bridge,
 	}
 	go func() {
 		waitErr := command.Wait()
@@ -127,6 +150,7 @@ func launchBrowser(ctx context.Context, options Options, config map[string]any) 
 		err := process.waitErr
 		process.closed = true
 		process.mu.Unlock()
+		stopBridgeOnError()
 		_ = removeProfile(profile, profileLock)
 		if err == nil {
 			err = errors.New("Camoufox 在报告 BiDi 端点前退出")
@@ -173,6 +197,9 @@ func (process *browserProcess) close(timeout time.Duration, terminate browserPro
 		}
 	}
 	closeErr = errors.Join(closeErr, removeProfile(process.profile, process.lock))
+	if process.bridge != nil {
+		closeErr = errors.Join(closeErr, process.bridge.Close())
+	}
 	if closeErr != nil {
 		return closeErr
 	}
@@ -225,9 +252,6 @@ func firefoxPreferences(proxyValue, bypass string) (map[string]any, error) {
 	parsed, err := url.Parse(proxyValue)
 	if err != nil || parsed.Hostname() == "" {
 		return nil, fmt.Errorf("Camoufox 代理 URL 无效")
-	}
-	if parsed.User != nil {
-		return nil, fmt.Errorf("Camoufox 原生代理暂不接受账号密码")
 	}
 	port, err := strconv.Atoi(parsed.Port())
 	if err != nil || port <= 0 {

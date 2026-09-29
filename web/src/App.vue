@@ -17,6 +17,7 @@ import type {
   AdminEvent,
   Model,
   Cooldown,
+  RequestLog,
   RequestSummary,
   ServiceConfig,
   ServiceStatus,
@@ -295,6 +296,17 @@ function resetEventCaches(): void {
   requests.value = []
 }
 
+// requestLogIndex 汇总每个请求的最新日志载荷，供冷却与请求页展开查看入参出参
+const requestLogIndex = computed(() => {
+  const index: Record<string, RequestLog> = {}
+  for (const log of logs.value) {
+    if (log.request !== undefined && log.request.id !== '') {
+      index[log.request.id] = log.request
+    }
+  }
+  return index
+})
+
 // connectAdminEvents 重建管理事件流
 function connectAdminEvents(): void {
   eventConnection?.close()
@@ -471,6 +483,7 @@ onUnmounted(() => {
         :accounts="accounts"
         :cooldowns="cooldowns"
         :requests="requests"
+        :request-logs="requestLogIndex"
         :loading="loading.requests || loading.cooldowns"
         :cooldown-error="errors.cooldowns"
         :request-error="errors.requests"

@@ -368,7 +368,7 @@ func SetAccessLogGenerationResult(
 func requestLoggingMiddleware(config Config, next http.Handler) http.Handler {
 	admin := config.Admin
 	bodyLimit := config.RequestLogBodyLimit
-	captureEnabled := config.RequestLog != nil && bodyLimit > 0
+	captureEnabled := bodyLimit > 0
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		metadata := &accessLogMetadata{admin: admin, method: r.Method, path: r.URL.Path, requestID: newID("req")}
@@ -403,12 +403,14 @@ func requestLoggingMiddleware(config Config, next http.Handler) http.Handler {
 			FinishReason: snapshot.finishReason, Error: snapshot.requestErr,
 			Canceled: snapshot.canceled, Generation: snapshot.generation,
 		}
-		if config.RequestLog != nil {
+		if config.RequestLog != nil || admin != nil {
 			entry.RequestBody, entry.RequestBodyBytes, entry.RequestBodyTruncated = requestCapture.snapshot()
 			entry.ResponseBody, entry.ResponseBodyBytes, entry.ResponseBodyTruncated = responseCapture.snapshot()
 			entry.ClientIP = clientIP(r)
 			entry.RemoteAddr = r.RemoteAddr
 			entry.Query = sanitizeQuery(r.URL.RawQuery)
+		}
+		if config.RequestLog != nil {
 			config.RequestLog.Record(entry)
 		}
 		if admin != nil {
