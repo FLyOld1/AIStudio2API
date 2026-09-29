@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -77,6 +78,7 @@ type accessLogResponseWriter struct {
 	http.ResponseWriter
 	status   int
 	metadata *accessLogMetadata
+	capture  *captureBuffer
 }
 
 func (writer *accessLogResponseWriter) WriteHeader(status int) {
@@ -91,6 +93,7 @@ func (writer *accessLogResponseWriter) Write(data []byte) (int, error) {
 	if writer.status == 0 {
 		writer.WriteHeader(http.StatusOK)
 	}
+	writer.capture.append(data)
 	return writer.ResponseWriter.Write(data)
 }
 
@@ -362,11 +365,20 @@ func SetAccessLogGenerationResult(
 	}
 }
 
-func requestLoggingMiddleware(admin AdminService, next http.Handler) http.Handler {
+func requestLoggingMiddleware(config Config, next http.Handler) http.Handler {
+	admin := config.Admin
+	bodyLimit := config.RequestLogBodyLimit
+	captureEnabled := config.RequestLog != nil && bodyLimit > 0
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started := time.Now()
 		metadata := &accessLogMetadata{admin: admin, method: r.Method, path: r.URL.Path, requestID: newID("req")}
-		writer := &accessLogResponseWriter{ResponseWriter: w, metadata: metadata}
+		var requestCapture, responseCapture *captureBuffer
+		if captureEnabled {
+			requestCapture = newCaptureBuffer(bodyLimit)
+			responseCapture = newCaptureBuffer(bodyLimit)
+			r.Body = &teeReadCloser{source: r.Body, capture: requestCapture}
+		}
+		writer := &accessLogResponseWriter{ResponseWriter: w, metadata: metadata, capture: responseCapture}
 		request := r.WithContext(context.WithValue(r.Context(), accessLogContextKey{}, metadata))
 		next.ServeHTTP(writer, request)
 		status := writer.status
@@ -379,19 +391,28 @@ func requestLoggingMiddleware(admin AdminService, next http.Handler) http.Handle
 		} else if status < http.StatusBadRequest && snapshot.failureStatus >= http.StatusBadRequest {
 			status = snapshot.failureStatus
 		}
+		entry := AccessLog{
+			Status: status, Latency: time.Since(started), FirstEvent: snapshot.firstEvent,
+			UpstreamBytes: snapshot.upstreamBytes, Usage: snapshot.usage, ToolCalls: snapshot.toolCalls,
+			InputMessages: snapshot.inputMessages, InputTextChars: snapshot.inputTextChars,
+			InputMedia: snapshot.inputMedia, InputMediaBytes: snapshot.inputMediaBytes, InputFiles: snapshot.inputFiles,
+			Temperature: snapshot.temperature, TopP: snapshot.topP,
+			Thinking: snapshot.thinking, MaxOutputTokens: snapshot.maxOutputTokens,
+			RequestID: snapshot.requestID,
+			Method:    r.Method, Path: r.URL.Path, Model: snapshot.model, Account: snapshot.account, Channel: snapshot.channel,
+			FinishReason: snapshot.finishReason, Error: snapshot.requestErr,
+			Canceled: snapshot.canceled, Generation: snapshot.generation,
+		}
+		if config.RequestLog != nil {
+			entry.RequestBody, entry.RequestBodyBytes, entry.RequestBodyTruncated = requestCapture.snapshot()
+			entry.ResponseBody, entry.ResponseBodyBytes, entry.ResponseBodyTruncated = responseCapture.snapshot()
+			entry.ClientIP = clientIP(r)
+			entry.RemoteAddr = r.RemoteAddr
+			entry.Query = sanitizeQuery(r.URL.RawQuery)
+			config.RequestLog.Record(entry)
+		}
 		if admin != nil {
-			admin.RecordAccessLog(AccessLog{
-				Status: status, Latency: time.Since(started), FirstEvent: snapshot.firstEvent,
-				UpstreamBytes: snapshot.upstreamBytes, Usage: snapshot.usage, ToolCalls: snapshot.toolCalls,
-				InputMessages: snapshot.inputMessages, InputTextChars: snapshot.inputTextChars,
-				InputMedia: snapshot.inputMedia, InputMediaBytes: snapshot.inputMediaBytes, InputFiles: snapshot.inputFiles,
-				Temperature: snapshot.temperature, TopP: snapshot.topP,
-				Thinking: snapshot.thinking, MaxOutputTokens: snapshot.maxOutputTokens,
-				RequestID: snapshot.requestID,
-				Method:    r.Method, Path: r.URL.Path, Model: snapshot.model, Account: snapshot.account, Channel: snapshot.channel,
-				FinishReason: snapshot.finishReason, Error: snapshot.requestErr,
-				Canceled: snapshot.canceled, Generation: snapshot.generation,
-			})
+			admin.RecordAccessLog(entry)
 		}
 	})
 }
@@ -415,15 +436,143 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func loopbackMiddleware(next http.Handler) http.Handler {
+// controlPlaneMiddleware 放行本机回环访问，并在启用远程访问时校验管理密钥
+func controlPlaneMiddleware(adminKey string, remoteAccess bool, next http.Handler) http.Handler {
+	adminKey = strings.TrimSpace(adminKey)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil || !net.ParseIP(host).IsLoopback() || !loopbackHost(r.Host) {
+		if loopbackRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !remoteAccess {
 			writeAdminError(w, http.StatusForbidden, "control_plane_forbidden", "Control plane is only available from loopback")
+			return
+		}
+		if adminKey == "" {
+			writeAdminError(w, http.StatusForbidden, "admin_key_required", "Remote control plane access requires ADMIN_API_KEY")
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(requestAdminKey(r)), []byte(adminKey)) != 1 {
+			writeAuthError(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// loopbackRequest 判断请求是否同时来自回环地址且访问回环主机名
+func loopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || !net.ParseIP(host).IsLoopback() || !loopbackHost(r.Host) {
+		return false
+	}
+	return true
+}
+
+// requestAdminKey 从请求头或查询参数读取管理密钥
+func requestAdminKey(r *http.Request) string {
+	if key := strings.TrimSpace(r.Header.Get("X-Admin-Key")); key != "" {
+		return key
+	}
+	return strings.TrimSpace(r.URL.Query().Get("key"))
+}
+
+// sensitiveQueryKeys 列出需要脱敏的查询参数名
+var sensitiveQueryKeys = map[string]struct{}{
+	"key": {}, "api_key": {}, "apikey": {}, "token": {}, "access_token": {},
+}
+
+// sanitizeQuery 对密钥类查询参数做脱敏并保留其余参数
+func sanitizeQuery(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	parts := strings.Split(raw, "&")
+	for index, part := range parts {
+		name, _, found := strings.Cut(part, "=")
+		if !found {
+			continue
+		}
+		if _, sensitive := sensitiveQueryKeys[strings.ToLower(name)]; sensitive {
+			parts[index] = name + "=***"
+		}
+	}
+	return strings.Join(parts, "&")
+}
+
+// clientIP 优先读取 X-Forwarded-For 首个地址，否则回退直连地址
+func clientIP(r *http.Request) string {
+	if forwarded := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); forwarded != "" {
+		if first, _, found := strings.Cut(forwarded, ","); found {
+			forwarded = strings.TrimSpace(first)
+		}
+		if forwarded != "" {
+			return forwarded
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// captureBuffer 记录正文前缀与总字节数，nil 值安全
+type captureBuffer struct {
+	limit     int
+	buf       []byte
+	total     int64
+	truncated bool
+}
+
+func newCaptureBuffer(limit int) *captureBuffer {
+	return &captureBuffer{limit: limit}
+}
+
+// append 追加正文内容，超过上限后只统计总字节数
+func (capture *captureBuffer) append(data []byte) {
+	if capture == nil {
+		return
+	}
+	capture.total += int64(len(data))
+	remaining := capture.limit - len(capture.buf)
+	if remaining <= 0 {
+		capture.truncated = true
+		return
+	}
+	if len(data) > remaining {
+		capture.buf = append(capture.buf, data[:remaining]...)
+		capture.truncated = true
+		return
+	}
+	capture.buf = append(capture.buf, data...)
+}
+
+// snapshot 返回正文前缀、总字节数与截断标记
+func (capture *captureBuffer) snapshot() (string, int64, bool) {
+	if capture == nil {
+		return "", 0, false
+	}
+	return string(capture.buf), capture.total, capture.truncated
+}
+
+// teeReadCloser 在读取请求体时同步捕获前缀
+type teeReadCloser struct {
+	source  io.ReadCloser
+	capture *captureBuffer
+}
+
+func (reader *teeReadCloser) Read(data []byte) (int, error) {
+	n, err := reader.source.Read(data)
+	if n > 0 {
+		reader.capture.append(data[:n])
+	}
+	return n, err
+}
+
+func (reader *teeReadCloser) Close() error {
+	return reader.source.Close()
 }
 
 // loopbackHost 判断 Host 或 Origin 主机名是否为 localhost 或回环地址

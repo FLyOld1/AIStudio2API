@@ -111,7 +111,11 @@ func runServer(ctx context.Context, cfg config.Config, options commandOptions, m
 	if err != nil {
 		return fmt.Errorf("监听 %s: %w", cfg.ListenAddr, err)
 	}
-	apiHandler := api.NewHandler(manager, api.Config{APIKey: cfg.ProxyAPIKey, Admin: manager})
+	apiHandler := api.NewHandler(manager, api.Config{
+		APIKey: cfg.ProxyAPIKey, Admin: manager,
+		AdminAPIKey: cfg.AdminAPIKey, AdminRemoteAccess: cfg.AdminRemoteAccess,
+		RequestLog: manager.requestLogSink(), RequestLogBodyLimit: cfg.RequestLogBodyLimitKB * 1024,
+	})
 	server := &http.Server{
 		Handler:           rootHandler(apiHandler),
 		ReadHeaderTimeout: 10 * time.Second,

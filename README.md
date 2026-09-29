@@ -45,6 +45,7 @@
 - **Files 与 Transcribe**: 支持文件上传、查询、内容读取、删除和音频转录
 - **Live 与 Robotics**: 通过 WebSocket 支持文本、音频、JPEG、媒体结束、工具调用、恢复和中断
 - **反指纹检测**: 使用 Camoufox 持有官方 WAA 生命周期，并为每个账户固定浏览器指纹与出口
+- **公网部署与请求日志**: 管理接口支持远程令牌访问；`/v1` 与 `/v1beta` 请求的入参和出参可落盘为 JSONL 并按大小与保留期自动清理
 - **图形界面启动器**: 通过网页管理账户、服务启停、实时日志、模型、请求和配置
 - **模块化架构**: Go 负责协议、调度、API 与管理端，Camoufox 负责 WAA 运行时和隔离登录
 
@@ -418,6 +419,14 @@ cp .env.example .env
 | `UPSTREAM_CHANNELS` | `playground,build` | 生成请求使用的上游通道，可只保留其一 |
 | `WAA_BACKEND` | `camoufox` | `camoufox` 在 Camoufox 页面运行 WAA；`go` 在服务进程内运行 WAA，不下载也不启动 Camoufox |
 | `TEMPORARY_CHAT` | `false` | WAA 预热页是否使用临时对话 |
+| `ADMIN_API_KEY` | 空 | 外部访问管理接口时携带的令牌；本机回环访问无需 |
+| `ADMIN_REMOTE_ACCESS` | `false` | 是否允许非回环地址访问管理接口，需同时设置 `ADMIN_API_KEY` |
+| `REQUEST_LOG_ENABLED` | `true` | 是否把 `/v1` 与 `/v1beta` 请求的入参和出参写入日志文件 |
+| `REQUEST_LOG_DIR` | `logs` | 请求日志目录 |
+| `REQUEST_LOG_MAX_FILE_MB` | `32` | 单个请求日志文件上限，超过后轮转 |
+| `REQUEST_LOG_MAX_TOTAL_MB` | `512` | 日志目录总量上限，超过后从最旧文件开始删除 |
+| `REQUEST_LOG_RETENTION_DAYS` | `7` | 请求日志保留天数 |
+| `REQUEST_LOG_BODY_LIMIT_KB` | `256` | 单条请求正文与响应正文的截断上限 |
 
 服务启动时会载入 `AISTUDIO_AUTH_STATES` 中的全部账户；`WARM_WORKER_LIMIT` 控制常驻预热规模，`MAX_ACTIVE_WORKERS` 控制峰值 Worker 上限，`WARM_STARTUP_CONCURRENCY` 控制启动预热并发，`PER_ACCOUNT_CONCURRENCY` 控制单账户请求槽位。
 
@@ -425,6 +434,26 @@ cp .env.example .env
 
 - **管理页面与 API**: 默认端口 `2048`
 - **Camoufox**: 由程序动态分配本机端口
+
+### 公网部署与远程管理
+
+默认情况下管理接口（`/api/*`）只允许本机回环访问。要把服务部署到公网并远程管理：
+
+1. 将 `LISTEN_ADDR` 改为 `0.0.0.0:2048`（或反向代理监听的内网地址）
+2. 设置强随机的 `ADMIN_API_KEY`，并开启 `ADMIN_REMOTE_ACCESS=true`
+3. 公开 API 仍由 `PROXY_API_KEY` 保护，建议与管理密钥使用不同的值
+
+远程打开管理页面时浏览器会弹出令牌输入框，令牌保存在浏览器本地，可在弹窗中清除。直连与反向代理均可；**反向代理必须保留原始 Host**（nginx 使用 `proxy_set_header Host $host`），否则远程访问会被误判为本机。公网部署建议配置 HTTPS 反向代理；`/api/events` 以查询参数携带令牌，反向代理访问日志建议记录 `$uri` 而非 `$request_uri`。修改 `ADMIN_API_KEY`、`ADMIN_REMOTE_ACCESS` 需要重新运行 `start.bat` 生效。
+
+### 请求日志
+
+`REQUEST_LOG_ENABLED=true` 时，服务把 `/v1` 与 `/v1beta` 请求的入参与出参正文写入 `REQUEST_LOG_DIR`（默认 `logs/`）下的 JSONL 文件：
+
+- 每条记录包含时间、请求 ID、客户端地址、模型、账户、状态码、耗时、token 用量、请求体与响应体
+- 单条正文默认截断到 `REQUEST_LOG_BODY_LIMIT_KB`，记录原始字节数与截断标记；流式响应记录聚合后的 SSE 原文
+- `Authorization`、`X-API-Key`、`X-Admin-Key` 请求头与 `?key=` 查询参数不会落盘
+- 文件按 `REQUEST_LOG_MAX_FILE_MB` 轮转；目录总量超过 `REQUEST_LOG_MAX_TOTAL_MB` 或文件超过 `REQUEST_LOG_RETENTION_DAYS` 时自动删除最旧文件
+- 日志页面的"清空"按钮会同时清空内存日志和磁盘请求日志文件；请求日志正文可能包含用户内容，注意 `logs/` 目录权限
 
 ## 高级功能
 

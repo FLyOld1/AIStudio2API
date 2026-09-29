@@ -9,10 +9,19 @@ import (
 	"github.com/Mag1cFall/AIStudio2API/internal/aistudio"
 )
 
+// RequestLogSink 接收公开 API 请求的完整访问记录
+type RequestLogSink interface {
+	Record(AccessLog)
+}
+
 // Config 定义公开 API 服务配置
 type Config struct {
-	APIKey string
-	Admin  AdminService
+	APIKey              string
+	Admin               AdminService
+	AdminAPIKey         string
+	AdminRemoteAccess   bool
+	RequestLog          RequestLogSink
+	RequestLogBodyLimit int
 }
 
 type server struct {
@@ -60,9 +69,9 @@ func NewHandler(service aistudio.Service, config Config) http.Handler {
 	root := http.NewServeMux()
 	root.Handle("GET /health", corsMiddleware(http.HandlerFunc(s.handleHealth)))
 	publicHandler := bodyLimitMiddleware(browserOriginMiddleware(config.APIKey, authMiddleware(config.APIKey, public)))
-	root.Handle("/v1/", requestLoggingMiddleware(config.Admin, corsMiddleware(publicHandler)))
-	root.Handle("/v1beta/", requestLoggingMiddleware(config.Admin, corsMiddleware(publicHandler)))
-	root.Handle("/api/", loopbackMiddleware(sameOriginMiddleware(control)))
+	root.Handle("/v1/", requestLoggingMiddleware(config, corsMiddleware(publicHandler)))
+	root.Handle("/v1beta/", requestLoggingMiddleware(config, corsMiddleware(publicHandler)))
+	root.Handle("/api/", controlPlaneMiddleware(config.AdminAPIKey, config.AdminRemoteAccess, sameOriginMiddleware(control)))
 	return root
 }
 

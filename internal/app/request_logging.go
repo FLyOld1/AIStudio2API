@@ -7,7 +7,53 @@ import (
 	"time"
 
 	"github.com/Mag1cFall/AIStudio2API/internal/api"
+	"github.com/Mag1cFall/AIStudio2API/internal/requestlog"
 )
+
+// requestLogSink 返回请求日志落盘接收器，未启用时返回 nil
+func (manager *runtimeManager) requestLogSink() api.RequestLogSink {
+	if manager.requestLog == nil {
+		return nil
+	}
+	return accessLogSink{store: manager.requestLog}
+}
+
+// accessLogSink 将访问记录写入请求日志文件存储
+type accessLogSink struct {
+	store *requestlog.Store
+}
+
+// Record 将访问记录映射为落盘条目
+func (sink accessLogSink) Record(entry api.AccessLog) {
+	sink.store.Record(requestLogEntry(entry))
+}
+
+// requestLogEntry 把访问记录转换为 JSONL 条目
+func requestLogEntry(entry api.AccessLog) requestlog.Entry {
+	record := requestlog.Entry{
+		Time:      time.Now(),
+		RequestID: entry.RequestID, ClientIP: entry.ClientIP, RemoteAddr: entry.RemoteAddr,
+		Method: entry.Method, Path: entry.Path, Query: entry.Query,
+		Model: entry.Model, Account: entry.Account, Channel: entry.Channel,
+		Status: entry.Status, LatencyMS: float64(entry.Latency) / float64(time.Millisecond),
+		FirstEventMS:  float64(entry.FirstEvent) / float64(time.Millisecond),
+		UpstreamBytes: entry.UpstreamBytes,
+		FinishReason:  entry.FinishReason, Error: entry.Error,
+		Canceled: entry.Canceled, Generation: entry.Generation,
+		RequestBody: entry.RequestBody, RequestBodyBytes: entry.RequestBodyBytes,
+		RequestBodyTruncated: entry.RequestBodyTruncated,
+		ResponseBody:         entry.ResponseBody, ResponseBodyBytes: entry.ResponseBodyBytes,
+		ResponseBodyTruncated: entry.ResponseBodyTruncated,
+	}
+	if usage := entry.Usage; usage != nil {
+		record.Usage = &requestlog.Usage{
+			InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens,
+			ReasoningTokens: usage.ReasoningTokens, ToolTokens: usage.ToolTokens,
+			TotalTokens: usage.TotalTokens,
+		}
+	}
+	return record
+}
 
 // requestLogData 投影请求身份、参数与端到端用量
 func requestLogData(entry api.AccessLog) *api.RequestLog {

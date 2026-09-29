@@ -53,6 +53,48 @@ export class ApiError extends Error {
   }
 }
 
+const ADMIN_KEY_STORAGE = 'aistudio2api_admin_key'
+let adminKey =
+  typeof window === 'undefined' ? '' : (window.localStorage.getItem(ADMIN_KEY_STORAGE) ?? '')
+let unauthorizedHandler: (() => void) | undefined
+
+// getAdminKey 返回当前会话使用的外部管理密钥
+export function getAdminKey(): string {
+  return adminKey
+}
+
+// setAdminKey 保存外部管理密钥到会话与本地存储
+export function setAdminKey(value: string): void {
+  adminKey = value.trim()
+  if (adminKey === '') window.localStorage.removeItem(ADMIN_KEY_STORAGE)
+  else window.localStorage.setItem(ADMIN_KEY_STORAGE, adminKey)
+}
+
+// clearAdminKey 清除外部管理密钥
+export function clearAdminKey(): void {
+  setAdminKey('')
+}
+
+// setUnauthorizedHandler 注册管理接口未授权回调
+export function setUnauthorizedHandler(handler: (() => void) | undefined): void {
+  unauthorizedHandler = handler
+}
+
+// isUnauthorized 判断错误是否为管理密钥缺失或无效
+export function isUnauthorized(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 401
+}
+
+// applyAdminKey 将管理密钥写入请求头
+function applyAdminKey(headers: Headers): void {
+  if (adminKey !== '') headers.set('X-Admin-Key', adminKey)
+}
+
+// handleUnauthorized 在 401 时通知界面弹出令牌输入
+function handleUnauthorized(status: number): void {
+  if (status === 401) unauthorizedHandler?.()
+}
+
 // responseErrorMessage 提取四套公开协议共享的错误消息
 async function responseErrorMessage(response: Response): Promise<string> {
   const body = await response.text()
@@ -70,9 +112,11 @@ async function requestJSON<T>(path: string, init?: RequestInit): Promise<T> {
   if (init?.body !== undefined) {
     headers.set('Content-Type', 'application/json')
   }
+  applyAdminKey(headers)
 
   const response = await fetch(path, { ...init, headers })
   if (!response.ok) {
+    handleUnauthorized(response.status)
     throw new ApiError(await responseErrorMessage(response), response.status)
   }
 
@@ -85,9 +129,11 @@ async function requestCommand(path: string, init: RequestInit): Promise<void> {
   if (init.body !== undefined) {
     headers.set('Content-Type', 'application/json')
   }
+  applyAdminKey(headers)
 
   const response = await fetch(path, { ...init, headers })
   if (!response.ok) {
+    handleUnauthorized(response.status)
     throw new ApiError(await responseErrorMessage(response), response.status)
   }
 }
@@ -162,8 +208,10 @@ export const api = {
 export function openAdminEvents(
   onEvent: (event: AdminEvent) => void,
   onOpen: () => void,
+  onError?: () => void,
 ): EventConnection {
-  const source = new EventSource('/api/events')
+  const path = adminKey === '' ? '/api/events' : `/api/events?key=${encodeURIComponent(adminKey)}`
+  const source = new EventSource(path)
   source.onopen = onOpen
   source.onmessage = (message) => {
     const event = parseAdminEvent(message.data)
@@ -171,6 +219,7 @@ export function openAdminEvents(
       onEvent(event)
     }
   }
+  source.onerror = () => onError?.()
 
   return {
     close: () => source.close(),

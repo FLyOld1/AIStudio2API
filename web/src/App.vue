@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { api, openAdminEvents, type EventConnection } from '@/api'
+import {
+  api,
+  clearAdminKey,
+  getAdminKey,
+  isUnauthorized,
+  openAdminEvents,
+  setAdminKey,
+  setUnauthorizedHandler,
+  type EventConnection,
+} from '@/api'
 import { useI18n, type TranslationKey } from '@/i18n'
 import type {
   Account,
@@ -14,6 +23,7 @@ import type {
   TabID,
 } from '@/types'
 import AccountsPanel from '@/components/AccountsPanel.vue'
+import AdminKeyDialog from '@/components/AdminKeyDialog.vue'
 import LogsPanel from '@/components/LogsPanel.vue'
 import ModelsTable from '@/components/ModelsTable.vue'
 import PlaygroundPanel from '@/components/PlaygroundPanel.vue'
@@ -54,6 +64,7 @@ const loading = reactive({
 const errors = reactive({ accounts: '', models: '', requests: '', cooldowns: '', config: '' })
 let eventConnection: EventConnection | undefined
 let noticeTimer: number | undefined
+const showAdminKeyDialog = ref(false)
 
 const navigation: { id: TabID; label: TranslationKey; icon: IconName }[] = [
   { id: 'logs', label: 'nav.logs', icon: 'dashboard' },
@@ -273,18 +284,64 @@ function handleAdminEvent(event: AdminEvent): void {
   replaceByID(requests.value, event.data)
 }
 
+// resetEventCaches 清空事件流增量缓存，重连后由服务端快照重建
+function resetEventCaches(): void {
+  pendingLogs = []
+  if (logFlushTimer !== undefined) {
+    window.clearTimeout(logFlushTimer)
+    logFlushTimer = undefined
+  }
+  logs.value = []
+  requests.value = []
+}
+
+// connectAdminEvents 重建管理事件流
+function connectAdminEvents(): void {
+  eventConnection?.close()
+  eventConnection = openAdminEvents(handleAdminEvent, resetEventCaches, handleStreamError)
+}
+
+// handleStreamError 探测管理接口状态，未授权时弹出令牌输入
+async function handleStreamError(): Promise<void> {
+  try {
+    await api.status()
+  } catch (error) {
+    if (isUnauthorized(error)) showAdminKeyDialog.value = true
+  }
+}
+
+// handleConfigSaved 保存配置后同步会话令牌并重建事件流
+function handleConfigSaved(saved: ServiceConfig): void {
+  config.value = saved
+  if (saved.admin_api_key !== '' && saved.admin_api_key !== getAdminKey()) {
+    setAdminKey(saved.admin_api_key)
+    connectAdminEvents()
+  }
+}
+
+// submitAdminKey 保存输入的令牌并重连管理接口
+async function submitAdminKey(value: string): Promise<void> {
+  setAdminKey(value)
+  showAdminKeyDialog.value = false
+  connectAdminEvents()
+  await refreshAll()
+}
+
+// clearAdminToken 清除已保存的令牌并重连管理接口
+async function clearAdminToken(): Promise<void> {
+  clearAdminKey()
+  showAdminKeyDialog.value = false
+  connectAdminEvents()
+  await refreshAll()
+}
+
 onMounted(async () => {
   document.title = t('app.title')
-  await refreshAll()
-  eventConnection = openAdminEvents(handleAdminEvent, () => {
-    pendingLogs = []
-    if (logFlushTimer !== undefined) {
-      window.clearTimeout(logFlushTimer)
-      logFlushTimer = undefined
-    }
-    logs.value = []
-    requests.value = []
+  setUnauthorizedHandler(() => {
+    showAdminKeyDialog.value = true
   })
+  await refreshAll()
+  connectAdminEvents()
 })
 
 watch(locale, () => {
@@ -292,6 +349,7 @@ watch(locale, () => {
 })
 
 onUnmounted(() => {
+  setUnauthorizedHandler(undefined)
   eventConnection?.close()
   if (logFlushTimer !== undefined) window.clearTimeout(logFlushTimer)
   if (noticeTimer !== undefined) window.clearTimeout(noticeTimer)
@@ -424,7 +482,7 @@ onUnmounted(() => {
         :config="config"
         :loading="loading.config"
         :error="errors.config"
-        @saved="config = $event"
+        @saved="handleConfigSaved"
         @notice="showNotice"
       />
       <PlaygroundPanel v-else :models="models" :api-key="config?.proxy_api_key ?? ''" />
@@ -443,6 +501,12 @@ onUnmounted(() => {
         {{ notice.message }}
       </div>
     </Transition>
+    <AdminKeyDialog
+      v-if="showAdminKeyDialog"
+      @save="submitAdminKey"
+      @clear="clearAdminToken"
+      @close="showAdminKeyDialog = false"
+    />
     <UiConfirm />
   </div>
 </template>

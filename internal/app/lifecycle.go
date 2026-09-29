@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync"
@@ -10,6 +11,7 @@ import (
 	"github.com/Mag1cFall/AIStudio2API/internal/aistudio"
 	"github.com/Mag1cFall/AIStudio2API/internal/api"
 	"github.com/Mag1cFall/AIStudio2API/internal/config"
+	"github.com/Mag1cFall/AIStudio2API/internal/requestlog"
 )
 
 // managedService 表示可整体替换的生成服务
@@ -64,6 +66,7 @@ type runtimeManager struct {
 	activeManagement config.Config
 	overrides        dataConfigOverrides
 	requests         *requestRegistry
+	requestLog       *requestlog.Store
 	factory          runtimeFactory
 	startMu          sync.Mutex
 	mu               sync.RWMutex
@@ -83,8 +86,23 @@ func newRuntimeManager(
 		lifecycle: ctx, configPath: configPath, activeManagement: cfg,
 		overrides: overrides, requests: requests, factory: buildRuntimeGeneration,
 	}
+	if cfg.RequestLogEnabled {
+		store, err := requestlog.Open(requestlog.Options{
+			Dir:           cfg.RequestLogDir,
+			MaxFileBytes:  int64(cfg.RequestLogMaxFileMB) << 20,
+			MaxTotalBytes: int64(cfg.RequestLogMaxTotalMB) << 20,
+			Retention:     time.Duration(cfg.RequestLogRetentionDays) * 24 * time.Hour,
+		})
+		if err != nil {
+			return nil, err
+		}
+		manager.requestLog = store
+	}
 	generation, err := manager.factory(ctx, ctx, cfg, requests)
 	if err != nil {
+		if manager.requestLog != nil {
+			_ = manager.requestLog.Close()
+		}
 		return nil, err
 	}
 	manager.current = generation
@@ -190,7 +208,11 @@ func (manager *runtimeManager) StopService(ctx context.Context) (api.AdminStatus
 func (manager *runtimeManager) Close() error {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-	return manager.current.Close()
+	err := manager.current.Close()
+	if manager.requestLog != nil {
+		err = errors.Join(err, manager.requestLog.Close())
+	}
+	return err
 }
 
 // Models 返回当前生成服务模型
@@ -365,9 +387,12 @@ func (manager *runtimeManager) VerifyAccount(ctx context.Context, id string) (ap
 	return manager.current.admin.VerifyAccount(ctx, id)
 }
 
-// ClearLogs 清空进程级管理日志
+// ClearLogs 清空进程级管理日志与请求日志文件
 func (manager *runtimeManager) ClearLogs(context.Context) error {
 	manager.requests.clearLogs()
+	if manager.requestLog != nil {
+		return manager.requestLog.Clear()
+	}
 	return nil
 }
 
@@ -437,7 +462,17 @@ func (manager *runtimeManager) RecordAccessLog(entry api.AccessLog) {
 func (manager *runtimeManager) decorateRuntimeConfig(value api.RuntimeConfig, active config.Config) api.RuntimeConfig {
 	value.ActiveListenAddr = manager.activeManagement.ListenAddr
 	value.ActiveAPIKey = manager.activeManagement.ProxyAPIKey
-	value.ManagementRestartRequired = value.ListenAddr != value.ActiveListenAddr || value.APIKey != value.ActiveAPIKey
+	value.ActiveAdminAPIKey = manager.activeManagement.AdminAPIKey
+	value.ManagementRestartRequired = value.ListenAddr != value.ActiveListenAddr ||
+		value.APIKey != value.ActiveAPIKey ||
+		value.AdminAPIKey != value.ActiveAdminAPIKey ||
+		value.AdminRemoteAccess != manager.activeManagement.AdminRemoteAccess ||
+		value.RequestLogEnabled != manager.activeManagement.RequestLogEnabled ||
+		value.RequestLogDir != manager.activeManagement.RequestLogDir ||
+		value.RequestLogMaxFileMB != manager.activeManagement.RequestLogMaxFileMB ||
+		value.RequestLogMaxTotalMB != manager.activeManagement.RequestLogMaxTotalMB ||
+		value.RequestLogRetentionDays != manager.activeManagement.RequestLogRetentionDays ||
+		value.RequestLogBodyLimitKB != manager.activeManagement.RequestLogBodyLimitKB
 	value.ServiceRestartRequired = !sameDataConfig(value, active, manager.overrides)
 	return value
 }

@@ -45,6 +45,7 @@
 - **Files and Transcribe**: File upload, metadata, content, deletion, and audio transcription
 - **Live and Robotics**: WebSocket text, audio, JPEG images, media end, tool calls, resumption, and interruption
 - **Anti-Fingerprinting**: Camoufox holds the official WAA lifecycle with a stable browser fingerprint and network exit per account
+- **Public Deployment and Request Log**: The control plane supports token-protected remote access; `/v1` and `/v1beta` request inputs and outputs can be persisted as JSONL with automatic rotation and retention cleanup
 - **GUI Launcher**: Manage accounts, service controls, live logs, models, requests, and configuration in the web UI
 - **Modular Architecture**: Go handles protocols, scheduling, APIs, and management; Camoufox hosts WAA and isolated login
 
@@ -418,6 +419,14 @@ cp .env.example .env
 | `UPSTREAM_CHANNELS` | `playground,build` | Upstream channels for generation requests; either one can be used alone |
 | `WAA_BACKEND` | `camoufox` | `camoufox` runs WAA in a Camoufox page; `go` runs WAA inside the service process and neither downloads nor starts Camoufox |
 | `TEMPORARY_CHAT` | `false` | Use Temporary Chat for the WAA prewarm page |
+| `ADMIN_API_KEY` | empty | Token required for remote access to the control plane; loopback access never needs it |
+| `ADMIN_REMOTE_ACCESS` | `false` | Allow non-loopback access to the control plane; requires `ADMIN_API_KEY` |
+| `REQUEST_LOG_ENABLED` | `true` | Write `/v1` and `/v1beta` request inputs and outputs to log files |
+| `REQUEST_LOG_DIR` | `logs` | Request log directory |
+| `REQUEST_LOG_MAX_FILE_MB` | `32` | Max size of a single request log file before rotation |
+| `REQUEST_LOG_MAX_TOTAL_MB` | `512` | Max total size of the log directory; oldest files are removed first |
+| `REQUEST_LOG_RETENTION_DAYS` | `7` | Request log retention in days |
+| `REQUEST_LOG_BODY_LIMIT_KB` | `256` | Truncation limit for a single request or response body |
 
 The service loads every account from `AISTUDIO_AUTH_STATES`. `WARM_WORKER_LIMIT` sets the resident warm pool, `MAX_ACTIVE_WORKERS` caps peak worker count, `WARM_STARTUP_CONCURRENCY` controls concurrent prewarming, and `PER_ACCOUNT_CONCURRENCY` controls request slots per account.
 
@@ -425,6 +434,26 @@ The service loads every account from `AISTUDIO_AUTH_STATES`. `WARM_WORKER_LIMIT`
 
 - **Management UI and APIs**: Default port `2048`
 - **Camoufox**: Local ports are allocated dynamically
+
+### Public Deployment and Remote Management
+
+By default the control plane (`/api/*`) only accepts loopback requests. To deploy the service publicly and manage it remotely:
+
+1. Set `LISTEN_ADDR` to `0.0.0.0:2048` (or the internal address your reverse proxy listens on)
+2. Set a strong random `ADMIN_API_KEY` and enable `ADMIN_REMOTE_ACCESS=true`
+3. Keep `PROXY_API_KEY` protecting the public APIs; use a different value from the admin key
+
+When the management UI is opened remotely, the browser prompts for the token and stores it locally; the dialog can clear it again. Direct connections and reverse proxies both work; **the reverse proxy must preserve the original Host** (nginx: `proxy_set_header Host $host`), otherwise remote requests are treated as local. Use an HTTPS reverse proxy for public deployments; `/api/events` carries the token as a query parameter, so configure your proxy access log to record `$uri` instead of `$request_uri`. Changing `ADMIN_API_KEY` or `ADMIN_REMOTE_ACCESS` requires restarting with `start.bat`.
+
+### Request Log
+
+With `REQUEST_LOG_ENABLED=true`, the service writes `/v1` and `/v1beta` request inputs and outputs as JSONL files under `REQUEST_LOG_DIR` (default `logs/`):
+
+- Each record contains time, request ID, client address, model, account, status, latency, token usage, request body, and response body
+- Bodies are truncated to `REQUEST_LOG_BODY_LIMIT_KB` by default, with original byte counts and truncation flags; streamed responses store the aggregated raw SSE payload
+- `Authorization`, `X-API-Key`, `X-Admin-Key` headers and `?key=` query parameters are never written to disk
+- Files rotate at `REQUEST_LOG_MAX_FILE_MB`; files are also removed once the directory exceeds `REQUEST_LOG_MAX_TOTAL_MB` or a file exceeds `REQUEST_LOG_RETENTION_DAYS`
+- The clear button on the logs page removes both in-memory logs and request log files; request bodies may contain user content, so protect the `logs/` directory
 
 ## Advanced Features
 

@@ -159,6 +159,14 @@ Camoufox 由 Go 通过 WebDriver BiDi 直接管理。启动数据面时，服务
 | `UPSTREAM_CHANNELS` | 生成请求的上游通道 `playground`、`build`，逗号分隔 | `playground,build` |
 | `WAA_BACKEND` | WAA 后端 `camoufox` 或 `go` | `camoufox` |
 | `TEMPORARY_CHAT` | WAA 预热页是否使用临时对话 | `false` |
+| `ADMIN_API_KEY` | 非回环访问管理接口时要求的令牌 | 空 |
+| `ADMIN_REMOTE_ACCESS` | 是否允许非回环访问管理接口，需要 `ADMIN_API_KEY` | `false` |
+| `REQUEST_LOG_ENABLED` | 是否把 `/v1` 与 `/v1beta` 请求入参与出参写入 JSONL | `true` |
+| `REQUEST_LOG_DIR` | 请求日志目录 | `logs` |
+| `REQUEST_LOG_MAX_FILE_MB` | 单个请求日志文件上限，超过后轮转 | `32` |
+| `REQUEST_LOG_MAX_TOTAL_MB` | 日志目录总量上限，超过后删除最旧文件 | `512` |
+| `REQUEST_LOG_RETENTION_DAYS` | 请求日志保留天数 | `7` |
+| `REQUEST_LOG_BODY_LIMIT_KB` | 单条请求正文与响应正文的截断上限 | `256` |
 
 `LISTEN_ADDR` 使用 `host:port`，端口范围为 `1..65535`。时长和容量字段必须为正值，`WARM_STARTUP_CONCURRENCY` 的有效范围为 `1..WARM_WORKER_LIMIT`。全局代理 URL 使用 `http`、`https` 或 `socks5` 纯 origin 形状。命令行 `--auth` 与 `--proxy` 会覆盖每次启动生成服务时读取的保存值。
 
@@ -169,9 +177,11 @@ Camoufox 由 Go 通过 WebDriver BiDi 直接管理。启动数据面时，服务
 | `auth_states`、`proxy`、`init_timeout`、`request_timeout` | 下一次启动生成服务时使用的保存值 |
 | `warm_worker_limit`、`max_active_workers`、`warm_startup_concurrency`、`per_account_concurrency` | 下一次启动生成服务时使用的容量参数 |
 | `temporary_chat`、`waa_backend`、`upstream_channels` | 下一次启动生成服务时使用的 WAA 与上游通道配置 |
+| `admin_api_key`、`admin_remote_access`、`active_admin_api_key` | 外部管理令牌与远程访问开关；`active_admin_api_key` 是当前管理进程固定使用的值 |
+| `request_log_enabled`、`request_log_dir`、`request_log_max_file_mb`、`request_log_max_total_mb`、`request_log_retention_days`、`request_log_body_limit_kb` | 请求日志落盘配置，管理进程重启后生效 |
 | `listen_addr`、`proxy_api_key` | 保存的管理监听配置 |
 | `active_listen_addr`、`active_proxy_api_key` | 当前管理进程固定使用的值 |
-| `management_restart_required` | 保存的监听地址或 API key 与当前管理进程不同 |
+| `management_restart_required` | 保存的管理进程级配置（监听地址、API key、远程管理、请求日志）与当前管理进程不同 |
 | `service_restart_required` | 保存的生成服务配置与当前生成服务实例不同 |
 
 配置保存使用临时文件、`Sync` 和原子替换。监听地址与本地 API key 由管理进程持有，进程重启后应用；其余配置在停止并再次启动生成服务后应用。

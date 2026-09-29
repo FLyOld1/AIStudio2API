@@ -20,10 +20,14 @@ const emit = defineEmits<{
 const { t } = useI18n()
 const saving = ref(false)
 const revealKey = ref(false)
+const revealAdminKey = ref(false)
 const form = reactive<ServiceConfig>({
   auth_states: 'auth',
   listen_addr: '127.0.0.1:2048',
   proxy_api_key: '',
+  admin_api_key: '',
+  active_admin_api_key: '',
+  admin_remote_access: false,
   active_listen_addr: '127.0.0.1:2048',
   active_proxy_api_key: '',
   management_restart_required: false,
@@ -39,6 +43,12 @@ const form = reactive<ServiceConfig>({
   upstream_channels: ['playground', 'build'],
   waa_backend: 'camoufox',
   temporary_chat: false,
+  request_log_enabled: true,
+  request_log_dir: 'logs',
+  request_log_max_file_mb: 32,
+  request_log_max_total_mb: 512,
+  request_log_retention_days: 7,
+  request_log_body_limit_kb: 256,
 })
 
 const upstreamChannelOptions: UpstreamChannel[] = ['playground', 'build']
@@ -168,6 +178,49 @@ async function saveConfig(): Promise<void> {
             {{ revealKey ? config.active_proxy_api_key || t('common.empty') : '••••••••' }}
           </span>
         </label>
+      </div>
+
+      <div class="rounded-lg border border-[#30363d] bg-[#161b22] p-4">
+        <label class="block">
+          <span class="mb-1 block text-sm font-medium text-gray-300">{{
+            t('settings.adminApiKey')
+          }}</span>
+          <div class="flex gap-2">
+            <input
+              v-model="form.admin_api_key"
+              :type="revealAdminKey ? 'text' : 'password'"
+              class="min-w-0 flex-1 rounded border border-[#30363d] bg-[#0d1117] px-3 py-2 text-white transition focus:border-blue-500 focus:outline-none"
+              autocomplete="new-password"
+            />
+            <button
+              class="rounded border border-[#30363d] bg-[#21262d] px-3 text-xs text-gray-300 transition hover:bg-[#30363d]"
+              type="button"
+              @click="revealAdminKey = !revealAdminKey"
+            >
+              {{ revealAdminKey ? t('settings.hide') : t('settings.reveal') }}
+            </button>
+          </div>
+          <span
+            v-if="form.admin_api_key !== config.active_admin_api_key"
+            class="mt-1 block text-xs text-gray-500"
+          >
+            {{ t('settings.activeValue') }}:
+            {{ revealAdminKey ? config.active_admin_api_key || t('common.empty') : '••••••••' }}
+          </span>
+        </label>
+        <label class="mt-4 flex items-center gap-3">
+          <input
+            v-model="form.admin_remote_access"
+            class="h-4 w-4 accent-blue-500"
+            type="checkbox"
+          />
+          <span class="text-sm font-medium text-gray-300">{{
+            t('settings.adminRemoteAccess')
+          }}</span>
+        </label>
+        <span class="mt-2 block text-xs text-gray-500">{{
+          t('settings.adminRemoteAccessHelp')
+        }}</span>
       </div>
 
       <div class="rounded-lg border border-[#30363d] bg-[#161b22] p-4">
@@ -321,6 +374,82 @@ async function saveConfig(): Promise<void> {
         <input v-model="form.temporary_chat" class="h-4 w-4 accent-blue-500" type="checkbox" />
         <span class="text-sm font-medium text-gray-300">{{ t('settings.temporaryChat') }}</span>
       </label>
+
+      <fieldset class="block rounded-lg border border-[#30363d] bg-[#161b22] p-4">
+        <legend class="sr-only">{{ t('settings.requestLog') }}</legend>
+        <label class="flex items-center gap-3">
+          <input
+            v-model="form.request_log_enabled"
+            class="h-4 w-4 accent-blue-500"
+            type="checkbox"
+          />
+          <span class="text-sm font-medium text-gray-300">{{
+            t('settings.requestLogEnabled')
+          }}</span>
+        </label>
+        <span class="mt-2 block text-xs text-gray-500">{{ t('settings.requestLogHelp') }}</span>
+        <div v-if="form.request_log_enabled" class="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-gray-400">{{
+              t('settings.requestLogDir')
+            }}</span>
+            <input
+              v-model.trim="form.request_log_dir"
+              class="w-full rounded border border-[#30363d] bg-[#0d1117] px-3 py-2 text-white transition focus:border-blue-500 focus:outline-none"
+              required
+              autocomplete="off"
+            />
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-gray-400">{{
+              t('settings.requestLogBodyLimit')
+            }}</span>
+            <input
+              v-model.number="form.request_log_body_limit_kb"
+              class="w-full rounded border border-[#30363d] bg-[#0d1117] px-3 py-2 text-white transition focus:border-blue-500 focus:outline-none"
+              type="number"
+              min="1"
+              required
+            />
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-gray-400">{{
+              t('settings.requestLogMaxFile')
+            }}</span>
+            <input
+              v-model.number="form.request_log_max_file_mb"
+              class="w-full rounded border border-[#30363d] bg-[#0d1117] px-3 py-2 text-white transition focus:border-blue-500 focus:outline-none"
+              type="number"
+              min="1"
+              required
+            />
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-gray-400">{{
+              t('settings.requestLogMaxTotal')
+            }}</span>
+            <input
+              v-model.number="form.request_log_max_total_mb"
+              class="w-full rounded border border-[#30363d] bg-[#0d1117] px-3 py-2 text-white transition focus:border-blue-500 focus:outline-none"
+              type="number"
+              :min="form.request_log_max_file_mb"
+              required
+            />
+          </label>
+          <label class="block">
+            <span class="mb-1 block text-sm font-medium text-gray-400">{{
+              t('settings.requestLogRetention')
+            }}</span>
+            <input
+              v-model.number="form.request_log_retention_days"
+              class="w-full rounded border border-[#30363d] bg-[#0d1117] px-3 py-2 text-white transition focus:border-blue-500 focus:outline-none"
+              type="number"
+              min="1"
+              required
+            />
+          </label>
+        </div>
+      </fieldset>
 
       <div class="flex justify-end pt-4">
         <button

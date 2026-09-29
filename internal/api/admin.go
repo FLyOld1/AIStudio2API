@@ -115,6 +115,16 @@ type AccessLog struct {
 	Error           string
 	Canceled        bool
 	Generation      bool
+
+	ClientIP              string
+	RemoteAddr            string
+	Query                 string
+	RequestBody           string
+	RequestBodyBytes      int64
+	RequestBodyTruncated  bool
+	ResponseBody          string
+	ResponseBodyBytes     int64
+	ResponseBodyTruncated bool
 }
 
 // AdminAccountCounts 表示账户状态计数
@@ -193,6 +203,16 @@ type RuntimeConfig struct {
 	UpstreamChannels          []string `json:"upstream_channels"`
 	TemporaryChat             bool     `json:"temporary_chat"`
 	WAABackend                string   `json:"waa_backend"`
+
+	AdminAPIKey             string `json:"admin_api_key"`
+	ActiveAdminAPIKey       string `json:"active_admin_api_key"`
+	AdminRemoteAccess       bool   `json:"admin_remote_access"`
+	RequestLogEnabled       bool   `json:"request_log_enabled"`
+	RequestLogDir           string `json:"request_log_dir"`
+	RequestLogMaxFileMB     int    `json:"request_log_max_file_mb"`
+	RequestLogMaxTotalMB    int    `json:"request_log_max_total_mb"`
+	RequestLogRetentionDays int    `json:"request_log_retention_days"`
+	RequestLogBodyLimitKB   int    `json:"request_log_body_limit_kb"`
 }
 
 // AdminCooldown 表示账户模型冷却

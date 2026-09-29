@@ -261,3 +261,31 @@ WARN  account@example.com  账号切换 | 模型=gemini-3.7-flash
 6. 按开始时间排序的活动 `request`
 
 后续增量事件类型为 `status`、`models`、`accounts`、`log`、`cooldowns` 和 `request`。每个 SSE `data` 行是 `{"type":"<TYPE>","data":<DTO>}`，其中 `<DTO>` 是对应类型的事件对象；字段定义见 [protocol.md](protocol.md)。
+
+## 请求日志落盘
+
+`REQUEST_LOG_ENABLED=true` 时，`/v1` 与 `/v1beta` 请求在结束时由 `internal/api` 的访问日志中间件把完整记录投递给 `internal/requestlog`，以一行一条 JSON 写入 `REQUEST_LOG_DIR`（默认 `logs/`）。运行日志与请求日志相互独立：前者面向运行状态，后者面向协议调试。
+
+| 字段 | 含义 |
+| --- | --- |
+| `time` | 记录时间（UTC） |
+| `request_id` | 请求标识，与运行日志中的请求事件一致 |
+| `client_ip`、`remote_addr` | 优先 `X-Forwarded-For` 首段，否则直连地址 |
+| `method`、`path`、`query` | 请求身份；`key`、`api_key`、`apikey`、`token`、`access_token` 的值为 `***` |
+| `model`、`account`、`channel` | 实际路由到的模型、账户与上游通道 |
+| `status`、`latency_ms`、`first_event_ms`、`upstream_bytes` | 状态码、总耗时、首事件耗时与上游字节数 |
+| `usage` | 输入、输出、思考、工具与总 token |
+| `finish_reason`、`error`、`canceled`、`generation` | 上游终止原因与错误 |
+| `request_body`、`request_body_bytes`、`request_body_truncated` | 请求体前缀、原始字节数与截断标记 |
+| `response_body`、`response_body_bytes`、`response_body_truncated` | 响应体前缀（流式响应为聚合后的 SSE 原文）、原始字节数与截断标记 |
+
+正文捕获使用惰性 tee：只保留处理器实际读取的前 `REQUEST_LOG_BODY_LIMIT_KB` KB，超出部分仅统计字节数。请求体未被读取时（如鉴权失败）正文为空。`Authorization`、`X-API-Key`、`X-Admin-Key` 等请求头不落盘。
+
+文件按 `REQUEST_LOG_MAX_FILE_MB` 轮转，命名形如 `requests-<时间戳>-<序号>.jsonl`；目录总量超过 `REQUEST_LOG_MAX_TOTAL_MB` 或文件超过 `REQUEST_LOG_RETENTION_DAYS` 时自动删除最旧文件（启动时、每 10 分钟与每次轮转时执行）。写入由单个 goroutine 串行完成，队列满时丢弃记录并限频告警，不阻塞请求。管理接口 `DELETE /api/logs`（日志页面的"清空"）同时清空内存日志与全部请求日志文件。
+
+示例：
+
+```json
+{"time":"2026-09-29T10:30:00.123Z","request_id":"req_1759137000123_1","client_ip":"127.0.0.1","remote_addr":"127.0.0.1:52310","method":"POST","path":"/v1/chat/completions","model":"gemini-flash-latest","account":"user@example.com","status":200,"latency_ms":812.5,"upstream_bytes":4096,"usage":{"input_tokens":12,"output_tokens":45,"total_tokens":57},"finish_reason":"stop","generation":true,"request_body":"{\"model\":\"gemini-flash-latest\",\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}","request_body_bytes":86,"response_body":"{\"id\":\"chatcmpl-...\",\"choices\":[...]}","response_body_bytes":512}
+```
+

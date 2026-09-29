@@ -15,20 +15,27 @@ import (
 )
 
 const (
-	defaultAuthStates         = "auth"
-	defaultListenAddr         = "127.0.0.1:2048"
-	defaultInitTimeout        = 2 * time.Minute
-	defaultRequestTimeout     = 5 * time.Minute
-	defaultWarmWorkerLimit    = 5
-	defaultMaxActiveWorkers   = 10
-	defaultWarmConcurrency    = 2
-	defaultAccountConcurrency = 2
+	defaultAuthStates           = "auth"
+	defaultListenAddr           = "127.0.0.1:2048"
+	defaultInitTimeout          = 2 * time.Minute
+	defaultRequestTimeout       = 5 * time.Minute
+	defaultWarmWorkerLimit      = 5
+	defaultMaxActiveWorkers     = 10
+	defaultWarmConcurrency      = 2
+	defaultAccountConcurrency   = 2
+	defaultRequestLogDir        = "logs"
+	defaultRequestLogMaxFileMB  = 32
+	defaultRequestLogMaxTotalMB = 512
+	defaultRequestLogRetainDays = 7
+	defaultRequestBodyLimitKB   = 256
 )
 
 var configKeys = [...]string{
 	"AISTUDIO_AUTH_STATES",
 	"LISTEN_ADDR",
 	"PROXY_API_KEY",
+	"ADMIN_API_KEY",
+	"ADMIN_REMOTE_ACCESS",
 	"PROXY",
 	"INIT_TIMEOUT",
 	"REQUEST_TIMEOUT",
@@ -40,6 +47,12 @@ var configKeys = [...]string{
 	"UPSTREAM_CHANNELS",
 	"TEMPORARY_CHAT",
 	"WAA_BACKEND",
+	"REQUEST_LOG_ENABLED",
+	"REQUEST_LOG_DIR",
+	"REQUEST_LOG_MAX_FILE_MB",
+	"REQUEST_LOG_MAX_TOTAL_MB",
+	"REQUEST_LOG_RETENTION_DAYS",
+	"REQUEST_LOG_BODY_LIMIT_KB",
 }
 
 // upstreamChannels 表示生成请求可启用的上游通道
@@ -53,36 +66,50 @@ const WAABackendGo = "go"
 
 // Config 保存服务的全局配置
 type Config struct {
-	AuthStates             string        `json:"auth_states"`
-	ListenAddr             string        `json:"listen_addr"`
-	ProxyAPIKey            string        `json:"proxy_api_key"`
-	Proxy                  string        `json:"proxy"`
-	InitTimeout            time.Duration `json:"-"`
-	RequestTimeout         time.Duration `json:"-"`
-	WarmWorkerLimit        int           `json:"warm_worker_limit"`
-	MaxActiveWorkers       int           `json:"max_active_workers"`
-	WarmStartupConcurrency int           `json:"warm_startup_concurrency"`
-	PerAccountConcurrency  int           `json:"per_account_concurrency"`
-	RoutingStrategy        string        `json:"routing_strategy"`
-	UpstreamChannels       []string      `json:"upstream_channels"`
-	TemporaryChat          bool          `json:"temporary_chat"`
-	WAABackend             string        `json:"waa_backend"`
+	AuthStates              string        `json:"auth_states"`
+	ListenAddr              string        `json:"listen_addr"`
+	ProxyAPIKey             string        `json:"proxy_api_key"`
+	AdminAPIKey             string        `json:"admin_api_key"`
+	AdminRemoteAccess       bool          `json:"admin_remote_access"`
+	Proxy                   string        `json:"proxy"`
+	InitTimeout             time.Duration `json:"-"`
+	RequestTimeout          time.Duration `json:"-"`
+	WarmWorkerLimit         int           `json:"warm_worker_limit"`
+	MaxActiveWorkers        int           `json:"max_active_workers"`
+	WarmStartupConcurrency  int           `json:"warm_startup_concurrency"`
+	PerAccountConcurrency   int           `json:"per_account_concurrency"`
+	RoutingStrategy         string        `json:"routing_strategy"`
+	UpstreamChannels        []string      `json:"upstream_channels"`
+	TemporaryChat           bool          `json:"temporary_chat"`
+	WAABackend              string        `json:"waa_backend"`
+	RequestLogEnabled       bool          `json:"request_log_enabled"`
+	RequestLogDir           string        `json:"request_log_dir"`
+	RequestLogMaxFileMB     int           `json:"request_log_max_file_mb"`
+	RequestLogMaxTotalMB    int           `json:"request_log_max_total_mb"`
+	RequestLogRetentionDays int           `json:"request_log_retention_days"`
+	RequestLogBodyLimitKB   int           `json:"request_log_body_limit_kb"`
 }
 
 // Default 返回可直接启动的默认配置
 func Default() Config {
 	return Config{
-		AuthStates:             defaultAuthStates,
-		ListenAddr:             defaultListenAddr,
-		InitTimeout:            defaultInitTimeout,
-		RequestTimeout:         defaultRequestTimeout,
-		WarmWorkerLimit:        defaultWarmWorkerLimit,
-		MaxActiveWorkers:       defaultMaxActiveWorkers,
-		WarmStartupConcurrency: defaultWarmConcurrency,
-		PerAccountConcurrency:  defaultAccountConcurrency,
-		RoutingStrategy:        "round-robin",
-		UpstreamChannels:       append([]string(nil), upstreamChannels...),
-		WAABackend:             WAABackendCamoufox,
+		AuthStates:              defaultAuthStates,
+		ListenAddr:              defaultListenAddr,
+		InitTimeout:             defaultInitTimeout,
+		RequestTimeout:          defaultRequestTimeout,
+		WarmWorkerLimit:         defaultWarmWorkerLimit,
+		MaxActiveWorkers:        defaultMaxActiveWorkers,
+		WarmStartupConcurrency:  defaultWarmConcurrency,
+		PerAccountConcurrency:   defaultAccountConcurrency,
+		RoutingStrategy:         "round-robin",
+		UpstreamChannels:        append([]string(nil), upstreamChannels...),
+		WAABackend:              WAABackendCamoufox,
+		RequestLogEnabled:       true,
+		RequestLogDir:           defaultRequestLogDir,
+		RequestLogMaxFileMB:     defaultRequestLogMaxFileMB,
+		RequestLogMaxTotalMB:    defaultRequestLogMaxTotalMB,
+		RequestLogRetentionDays: defaultRequestLogRetainDays,
+		RequestLogBodyLimitKB:   defaultRequestBodyLimitKB,
 	}
 }
 
@@ -107,6 +134,15 @@ func Load(path string) (Config, error) {
 	}
 	if value, ok := values["PROXY_API_KEY"]; ok {
 		cfg.ProxyAPIKey = strings.TrimSpace(value)
+	}
+	if value, ok := values["ADMIN_API_KEY"]; ok {
+		cfg.AdminAPIKey = strings.TrimSpace(value)
+	}
+	if value, ok := values["ADMIN_REMOTE_ACCESS"]; ok {
+		cfg.AdminRemoteAccess, err = strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return Config{}, fmt.Errorf("ADMIN_REMOTE_ACCESS 必须是 true 或 false")
+		}
 	}
 	if value, ok := values["PROXY"]; ok {
 		cfg.Proxy = strings.TrimSpace(value)
@@ -162,6 +198,39 @@ func Load(path string) (Config, error) {
 	if value, ok := values["WAA_BACKEND"]; ok {
 		cfg.WAABackend = strings.ToLower(strings.TrimSpace(value))
 	}
+	if value, ok := values["REQUEST_LOG_ENABLED"]; ok {
+		cfg.RequestLogEnabled, err = strconv.ParseBool(strings.TrimSpace(value))
+		if err != nil {
+			return Config{}, fmt.Errorf("REQUEST_LOG_ENABLED 必须是 true 或 false")
+		}
+	}
+	if value, ok := values["REQUEST_LOG_DIR"]; ok {
+		cfg.RequestLogDir = strings.TrimSpace(value)
+	}
+	if value, ok := values["REQUEST_LOG_MAX_FILE_MB"]; ok {
+		cfg.RequestLogMaxFileMB, err = parsePositiveInt("REQUEST_LOG_MAX_FILE_MB", value)
+		if err != nil {
+			return Config{}, err
+		}
+	}
+	if value, ok := values["REQUEST_LOG_MAX_TOTAL_MB"]; ok {
+		cfg.RequestLogMaxTotalMB, err = parsePositiveInt("REQUEST_LOG_MAX_TOTAL_MB", value)
+		if err != nil {
+			return Config{}, err
+		}
+	}
+	if value, ok := values["REQUEST_LOG_RETENTION_DAYS"]; ok {
+		cfg.RequestLogRetentionDays, err = parsePositiveInt("REQUEST_LOG_RETENTION_DAYS", value)
+		if err != nil {
+			return Config{}, err
+		}
+	}
+	if value, ok := values["REQUEST_LOG_BODY_LIMIT_KB"]; ok {
+		cfg.RequestLogBodyLimitKB, err = parsePositiveInt("REQUEST_LOG_BODY_LIMIT_KB", value)
+		if err != nil {
+			return Config{}, err
+		}
+	}
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -174,20 +243,28 @@ func (c Config) Save(path string) error {
 		return err
 	}
 	values := map[string]string{
-		"AISTUDIO_AUTH_STATES":     c.AuthStates,
-		"LISTEN_ADDR":              c.ListenAddr,
-		"PROXY_API_KEY":            c.ProxyAPIKey,
-		"PROXY":                    c.Proxy,
-		"INIT_TIMEOUT":             c.InitTimeout.String(),
-		"REQUEST_TIMEOUT":          c.RequestTimeout.String(),
-		"WARM_WORKER_LIMIT":        strconv.Itoa(c.WarmWorkerLimit),
-		"MAX_ACTIVE_WORKERS":       strconv.Itoa(c.MaxActiveWorkers),
-		"WARM_STARTUP_CONCURRENCY": strconv.Itoa(c.WarmStartupConcurrency),
-		"PER_ACCOUNT_CONCURRENCY":  strconv.Itoa(c.PerAccountConcurrency),
-		"ROUTING_STRATEGY":         c.RoutingStrategy,
-		"UPSTREAM_CHANNELS":        strings.Join(c.UpstreamChannels, ","),
-		"TEMPORARY_CHAT":           strconv.FormatBool(c.TemporaryChat),
-		"WAA_BACKEND":              c.WAABackend,
+		"AISTUDIO_AUTH_STATES":       c.AuthStates,
+		"LISTEN_ADDR":                c.ListenAddr,
+		"PROXY_API_KEY":              c.ProxyAPIKey,
+		"ADMIN_API_KEY":              c.AdminAPIKey,
+		"ADMIN_REMOTE_ACCESS":        strconv.FormatBool(c.AdminRemoteAccess),
+		"PROXY":                      c.Proxy,
+		"INIT_TIMEOUT":               c.InitTimeout.String(),
+		"REQUEST_TIMEOUT":            c.RequestTimeout.String(),
+		"WARM_WORKER_LIMIT":          strconv.Itoa(c.WarmWorkerLimit),
+		"MAX_ACTIVE_WORKERS":         strconv.Itoa(c.MaxActiveWorkers),
+		"WARM_STARTUP_CONCURRENCY":   strconv.Itoa(c.WarmStartupConcurrency),
+		"PER_ACCOUNT_CONCURRENCY":    strconv.Itoa(c.PerAccountConcurrency),
+		"ROUTING_STRATEGY":           c.RoutingStrategy,
+		"UPSTREAM_CHANNELS":          strings.Join(c.UpstreamChannels, ","),
+		"TEMPORARY_CHAT":             strconv.FormatBool(c.TemporaryChat),
+		"WAA_BACKEND":                c.WAABackend,
+		"REQUEST_LOG_ENABLED":        strconv.FormatBool(c.RequestLogEnabled),
+		"REQUEST_LOG_DIR":            c.RequestLogDir,
+		"REQUEST_LOG_MAX_FILE_MB":    strconv.Itoa(c.RequestLogMaxFileMB),
+		"REQUEST_LOG_MAX_TOTAL_MB":   strconv.Itoa(c.RequestLogMaxTotalMB),
+		"REQUEST_LOG_RETENTION_DAYS": strconv.Itoa(c.RequestLogRetentionDays),
+		"REQUEST_LOG_BODY_LIMIT_KB":  strconv.Itoa(c.RequestLogBodyLimitKB),
 	}
 
 	var output strings.Builder
@@ -238,6 +315,26 @@ func (c Config) Validate() error {
 	if c.WAABackend != WAABackendCamoufox && c.WAABackend != WAABackendGo {
 		return fmt.Errorf("WAA_BACKEND 必须是 camoufox 或 go")
 	}
+	if c.AdminRemoteAccess && strings.TrimSpace(c.AdminAPIKey) == "" {
+		return fmt.Errorf("ADMIN_REMOTE_ACCESS 需要同时设置 ADMIN_API_KEY")
+	}
+	if c.RequestLogEnabled {
+		if strings.TrimSpace(c.RequestLogDir) == "" {
+			return fmt.Errorf("REQUEST_LOG_DIR 不能为空")
+		}
+		if c.RequestLogMaxFileMB <= 0 {
+			return fmt.Errorf("REQUEST_LOG_MAX_FILE_MB 必须是正整数")
+		}
+		if c.RequestLogMaxTotalMB < c.RequestLogMaxFileMB {
+			return fmt.Errorf("REQUEST_LOG_MAX_TOTAL_MB 必须大于或等于 REQUEST_LOG_MAX_FILE_MB")
+		}
+		if c.RequestLogRetentionDays <= 0 {
+			return fmt.Errorf("REQUEST_LOG_RETENTION_DAYS 必须是正整数")
+		}
+		if c.RequestLogBodyLimitKB <= 0 {
+			return fmt.Errorf("REQUEST_LOG_BODY_LIMIT_KB 必须是正整数")
+		}
+	}
 	return nil
 }
 
@@ -277,56 +374,80 @@ func validateUpstreamChannels(channels []string) error {
 // MarshalJSON 将时长输出为 env 使用的文本格式
 func (c Config) MarshalJSON() ([]byte, error) {
 	type payload struct {
-		AuthStates             string   `json:"auth_states"`
-		ListenAddr             string   `json:"listen_addr"`
-		ProxyAPIKey            string   `json:"proxy_api_key"`
-		Proxy                  string   `json:"proxy"`
-		InitTimeout            string   `json:"init_timeout"`
-		RequestTimeout         string   `json:"request_timeout"`
-		WarmWorkerLimit        int      `json:"warm_worker_limit"`
-		MaxActiveWorkers       int      `json:"max_active_workers"`
-		WarmStartupConcurrency int      `json:"warm_startup_concurrency"`
-		PerAccountConcurrency  int      `json:"per_account_concurrency"`
-		RoutingStrategy        string   `json:"routing_strategy"`
-		UpstreamChannels       []string `json:"upstream_channels"`
-		TemporaryChat          bool     `json:"temporary_chat"`
-		WAABackend             string   `json:"waa_backend"`
+		AuthStates              string   `json:"auth_states"`
+		ListenAddr              string   `json:"listen_addr"`
+		ProxyAPIKey             string   `json:"proxy_api_key"`
+		AdminAPIKey             string   `json:"admin_api_key"`
+		AdminRemoteAccess       bool     `json:"admin_remote_access"`
+		Proxy                   string   `json:"proxy"`
+		InitTimeout             string   `json:"init_timeout"`
+		RequestTimeout          string   `json:"request_timeout"`
+		WarmWorkerLimit         int      `json:"warm_worker_limit"`
+		MaxActiveWorkers        int      `json:"max_active_workers"`
+		WarmStartupConcurrency  int      `json:"warm_startup_concurrency"`
+		PerAccountConcurrency   int      `json:"per_account_concurrency"`
+		RoutingStrategy         string   `json:"routing_strategy"`
+		UpstreamChannels        []string `json:"upstream_channels"`
+		TemporaryChat           bool     `json:"temporary_chat"`
+		WAABackend              string   `json:"waa_backend"`
+		RequestLogEnabled       bool     `json:"request_log_enabled"`
+		RequestLogDir           string   `json:"request_log_dir"`
+		RequestLogMaxFileMB     int      `json:"request_log_max_file_mb"`
+		RequestLogMaxTotalMB    int      `json:"request_log_max_total_mb"`
+		RequestLogRetentionDays int      `json:"request_log_retention_days"`
+		RequestLogBodyLimitKB   int      `json:"request_log_body_limit_kb"`
 	}
 	return json.Marshal(payload{
-		AuthStates:             c.AuthStates,
-		ListenAddr:             c.ListenAddr,
-		ProxyAPIKey:            c.ProxyAPIKey,
-		Proxy:                  c.Proxy,
-		InitTimeout:            c.InitTimeout.String(),
-		RequestTimeout:         c.RequestTimeout.String(),
-		WarmWorkerLimit:        c.WarmWorkerLimit,
-		MaxActiveWorkers:       c.MaxActiveWorkers,
-		WarmStartupConcurrency: c.WarmStartupConcurrency,
-		PerAccountConcurrency:  c.PerAccountConcurrency,
-		RoutingStrategy:        c.RoutingStrategy,
-		UpstreamChannels:       c.UpstreamChannels,
-		TemporaryChat:          c.TemporaryChat,
-		WAABackend:             c.WAABackend,
+		AuthStates:              c.AuthStates,
+		ListenAddr:              c.ListenAddr,
+		ProxyAPIKey:             c.ProxyAPIKey,
+		AdminAPIKey:             c.AdminAPIKey,
+		AdminRemoteAccess:       c.AdminRemoteAccess,
+		Proxy:                   c.Proxy,
+		InitTimeout:             c.InitTimeout.String(),
+		RequestTimeout:          c.RequestTimeout.String(),
+		WarmWorkerLimit:         c.WarmWorkerLimit,
+		MaxActiveWorkers:        c.MaxActiveWorkers,
+		WarmStartupConcurrency:  c.WarmStartupConcurrency,
+		PerAccountConcurrency:   c.PerAccountConcurrency,
+		RoutingStrategy:         c.RoutingStrategy,
+		UpstreamChannels:        c.UpstreamChannels,
+		TemporaryChat:           c.TemporaryChat,
+		WAABackend:              c.WAABackend,
+		RequestLogEnabled:       c.RequestLogEnabled,
+		RequestLogDir:           c.RequestLogDir,
+		RequestLogMaxFileMB:     c.RequestLogMaxFileMB,
+		RequestLogMaxTotalMB:    c.RequestLogMaxTotalMB,
+		RequestLogRetentionDays: c.RequestLogRetentionDays,
+		RequestLogBodyLimitKB:   c.RequestLogBodyLimitKB,
 	})
 }
 
 // UnmarshalJSON 从管理接口使用的文本时长解析配置
 func (c *Config) UnmarshalJSON(data []byte) error {
 	type payload struct {
-		AuthStates             string   `json:"auth_states"`
-		ListenAddr             string   `json:"listen_addr"`
-		ProxyAPIKey            string   `json:"proxy_api_key"`
-		Proxy                  string   `json:"proxy"`
-		InitTimeout            string   `json:"init_timeout"`
-		RequestTimeout         string   `json:"request_timeout"`
-		WarmWorkerLimit        int      `json:"warm_worker_limit"`
-		MaxActiveWorkers       int      `json:"max_active_workers"`
-		WarmStartupConcurrency int      `json:"warm_startup_concurrency"`
-		PerAccountConcurrency  int      `json:"per_account_concurrency"`
-		RoutingStrategy        string   `json:"routing_strategy"`
-		UpstreamChannels       []string `json:"upstream_channels"`
-		TemporaryChat          bool     `json:"temporary_chat"`
-		WAABackend             string   `json:"waa_backend"`
+		AuthStates              string   `json:"auth_states"`
+		ListenAddr              string   `json:"listen_addr"`
+		ProxyAPIKey             string   `json:"proxy_api_key"`
+		AdminAPIKey             string   `json:"admin_api_key"`
+		AdminRemoteAccess       bool     `json:"admin_remote_access"`
+		Proxy                   string   `json:"proxy"`
+		InitTimeout             string   `json:"init_timeout"`
+		RequestTimeout          string   `json:"request_timeout"`
+		WarmWorkerLimit         int      `json:"warm_worker_limit"`
+		MaxActiveWorkers        int      `json:"max_active_workers"`
+		WarmStartupConcurrency  int      `json:"warm_startup_concurrency"`
+		PerAccountConcurrency   int      `json:"per_account_concurrency"`
+		RoutingStrategy         string   `json:"routing_strategy"`
+		UpstreamChannels        []string `json:"upstream_channels"`
+		TemporaryChat           bool     `json:"temporary_chat"`
+		WAABackend              string   `json:"waa_backend"`
+		RequestLogEnabled       bool     `json:"request_log_enabled"`
+		RequestLogDir           string   `json:"request_log_dir"`
+		RequestLogMaxFileMB     int      `json:"request_log_max_file_mb"`
+		RequestLogMaxTotalMB    int      `json:"request_log_max_total_mb"`
+		RequestLogRetentionDays int      `json:"request_log_retention_days"`
+		RequestLogBodyLimitKB   int      `json:"request_log_body_limit_kb"`
 	}
 	var value payload
 	if err := json.Unmarshal(data, &value); err != nil {
@@ -341,20 +462,28 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	parsed := Config{
-		AuthStates:             strings.TrimSpace(value.AuthStates),
-		ListenAddr:             strings.TrimSpace(value.ListenAddr),
-		ProxyAPIKey:            strings.TrimSpace(value.ProxyAPIKey),
-		Proxy:                  strings.TrimSpace(value.Proxy),
-		InitTimeout:            initTimeout,
-		RequestTimeout:         requestTimeout,
-		WarmWorkerLimit:        value.WarmWorkerLimit,
-		MaxActiveWorkers:       value.MaxActiveWorkers,
-		WarmStartupConcurrency: value.WarmStartupConcurrency,
-		PerAccountConcurrency:  value.PerAccountConcurrency,
-		RoutingStrategy:        value.RoutingStrategy,
-		UpstreamChannels:       value.UpstreamChannels,
-		TemporaryChat:          value.TemporaryChat,
-		WAABackend:             strings.ToLower(strings.TrimSpace(value.WAABackend)),
+		AuthStates:              strings.TrimSpace(value.AuthStates),
+		ListenAddr:              strings.TrimSpace(value.ListenAddr),
+		ProxyAPIKey:             strings.TrimSpace(value.ProxyAPIKey),
+		AdminAPIKey:             strings.TrimSpace(value.AdminAPIKey),
+		AdminRemoteAccess:       value.AdminRemoteAccess,
+		Proxy:                   strings.TrimSpace(value.Proxy),
+		InitTimeout:             initTimeout,
+		RequestTimeout:          requestTimeout,
+		WarmWorkerLimit:         value.WarmWorkerLimit,
+		MaxActiveWorkers:        value.MaxActiveWorkers,
+		WarmStartupConcurrency:  value.WarmStartupConcurrency,
+		PerAccountConcurrency:   value.PerAccountConcurrency,
+		RoutingStrategy:         value.RoutingStrategy,
+		UpstreamChannels:        value.UpstreamChannels,
+		TemporaryChat:           value.TemporaryChat,
+		WAABackend:              strings.ToLower(strings.TrimSpace(value.WAABackend)),
+		RequestLogEnabled:       value.RequestLogEnabled,
+		RequestLogDir:           strings.TrimSpace(value.RequestLogDir),
+		RequestLogMaxFileMB:     value.RequestLogMaxFileMB,
+		RequestLogMaxTotalMB:    value.RequestLogMaxTotalMB,
+		RequestLogRetentionDays: value.RequestLogRetentionDays,
+		RequestLogBodyLimitKB:   value.RequestLogBodyLimitKB,
 	}
 	if err := parsed.Validate(); err != nil {
 		return err

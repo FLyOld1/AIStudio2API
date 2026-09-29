@@ -717,14 +717,21 @@ func (admin *runtimeAdmin) UpdateRuntimeConfig(_ context.Context, value api.Runt
 	}
 	cfg := config.Config{
 		AuthStates: value.AuthStates, ListenAddr: value.ListenAddr, ProxyAPIKey: value.APIKey,
+		AdminAPIKey: value.AdminAPIKey, AdminRemoteAccess: value.AdminRemoteAccess,
 		Proxy: value.Proxy, InitTimeout: initTimeout, RequestTimeout: requestTimeout,
 		WarmWorkerLimit: value.WarmWorkerLimit, MaxActiveWorkers: value.MaxActiveWorkers,
-		WarmStartupConcurrency: value.WarmStartupConcurrency,
-		PerAccountConcurrency:  value.PerAccountConcurrency,
-		RoutingStrategy:        value.RoutingStrategy,
-		UpstreamChannels:       value.UpstreamChannels,
-		TemporaryChat:          value.TemporaryChat,
-		WAABackend:             value.WAABackend,
+		WarmStartupConcurrency:  value.WarmStartupConcurrency,
+		PerAccountConcurrency:   value.PerAccountConcurrency,
+		RoutingStrategy:         value.RoutingStrategy,
+		UpstreamChannels:        value.UpstreamChannels,
+		TemporaryChat:           value.TemporaryChat,
+		WAABackend:              value.WAABackend,
+		RequestLogEnabled:       value.RequestLogEnabled,
+		RequestLogDir:           value.RequestLogDir,
+		RequestLogMaxFileMB:     value.RequestLogMaxFileMB,
+		RequestLogMaxTotalMB:    value.RequestLogMaxTotalMB,
+		RequestLogRetentionDays: value.RequestLogRetentionDays,
+		RequestLogBodyLimitKB:   value.RequestLogBodyLimitKB,
 	}
 	if err := cfg.Save(admin.configPath); err != nil {
 		return api.RuntimeConfig{}, err
@@ -1303,14 +1310,22 @@ func runtimeConfigDTO(cfg config.Config) api.RuntimeConfig {
 	return api.RuntimeConfig{
 		AuthStates: cfg.AuthStates, ListenAddr: cfg.ListenAddr, APIKey: cfg.ProxyAPIKey,
 		ActiveListenAddr: cfg.ListenAddr, ActiveAPIKey: cfg.ProxyAPIKey,
-		Proxy: cfg.Proxy, InitTimeout: cfg.InitTimeout.String(), RequestTimeout: cfg.RequestTimeout.String(),
+		AdminAPIKey: cfg.AdminAPIKey, ActiveAdminAPIKey: cfg.AdminAPIKey,
+		AdminRemoteAccess: cfg.AdminRemoteAccess,
+		Proxy:             cfg.Proxy, InitTimeout: cfg.InitTimeout.String(), RequestTimeout: cfg.RequestTimeout.String(),
 		WarmWorkerLimit: cfg.WarmWorkerLimit, MaxActiveWorkers: cfg.MaxActiveWorkers,
-		WarmStartupConcurrency: cfg.WarmStartupConcurrency,
-		PerAccountConcurrency:  cfg.PerAccountConcurrency,
-		RoutingStrategy:        cfg.RoutingStrategy,
-		UpstreamChannels:       cfg.UpstreamChannels,
-		TemporaryChat:          cfg.TemporaryChat,
-		WAABackend:             cfg.WAABackend,
+		WarmStartupConcurrency:  cfg.WarmStartupConcurrency,
+		PerAccountConcurrency:   cfg.PerAccountConcurrency,
+		RoutingStrategy:         cfg.RoutingStrategy,
+		UpstreamChannels:        cfg.UpstreamChannels,
+		TemporaryChat:           cfg.TemporaryChat,
+		WAABackend:              cfg.WAABackend,
+		RequestLogEnabled:       cfg.RequestLogEnabled,
+		RequestLogDir:           cfg.RequestLogDir,
+		RequestLogMaxFileMB:     cfg.RequestLogMaxFileMB,
+		RequestLogMaxTotalMB:    cfg.RequestLogMaxTotalMB,
+		RequestLogRetentionDays: cfg.RequestLogRetentionDays,
+		RequestLogBodyLimitKB:   cfg.RequestLogBodyLimitKB,
 	}
 }
 

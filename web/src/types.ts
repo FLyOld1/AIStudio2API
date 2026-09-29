@@ -142,6 +142,9 @@ export interface ServiceConfig {
   auth_states: string
   listen_addr: string
   proxy_api_key: string
+  admin_api_key: string
+  active_admin_api_key: string
+  admin_remote_access: boolean
   active_listen_addr: string
   active_proxy_api_key: string
   management_restart_required: boolean
@@ -157,6 +160,12 @@ export interface ServiceConfig {
   upstream_channels: UpstreamChannel[]
   waa_backend: 'camoufox' | 'go'
   temporary_chat: boolean
+  request_log_enabled: boolean
+  request_log_dir: string
+  request_log_max_file_mb: number
+  request_log_max_total_mb: number
+  request_log_retention_days: number
+  request_log_body_limit_kb: number
 }
 
 export type AdminEvent =
